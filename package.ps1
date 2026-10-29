@@ -30,6 +30,9 @@ $vlc = Join-Path $stage 'vlc'
 New-Item -ItemType Directory -Path $vlc -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $VlcDirectory 'libvlc.dll'), (Join-Path $VlcDirectory 'libvlccore.dll') -Destination $vlc
 Copy-Item -LiteralPath (Join-Path $VlcDirectory 'plugins') -Destination $vlc -Recurse
+# Installed VLC caches describe the original installation; do not ship a stale cache.
+$pluginCache = Join-Path $vlc 'plugins\plugins.dat'
+if (Test-Path -LiteralPath $pluginCache) { Remove-Item -LiteralPath $pluginCache -Force }
 $licenses = Join-Path $stage 'licenses'
 New-Item -ItemType Directory -Path $licenses -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $workspacePath 'LICENSE') -Destination (Join-Path $licenses 'Sessions-GPL-3.0.txt')
