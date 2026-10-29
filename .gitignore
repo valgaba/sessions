@@ -1,0 +1,5 @@
+/build/
+/out/
+*.pro.user
+*.pro.user.*
+/.qtc_clangd/

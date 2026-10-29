@@ -1,0 +1,84 @@
+# Sessions
+
+Código fuente: [valgaba/sessions](https://github.com/valgaba/sessions).
+
+Aplicación Qt C++ siguiendo la estructura de Radit. Arriba están la composición editable y el lienzo de salida. La zona inferior ocupa todo el ancho y contiene tres paneles de widgets, de izquierda a derecha. Las zonas superior e inferior empiezan con la misma altura, con la separación en el centro. Los separadores permiten ajustar su ancho y la altura de la zona inferior.
+
+Usa el mismo kit de Radit y ForgeCraft: **Qt Widgets 6.7.0, C++17, qmake y MinGW 11.2 de 64 bits**. No requiere módulos de audio.
+
+La reproducción de Multimedia utiliza **LibVLC 3 de 64 bits**, ya instalado en este equipo, porque el kit no incluye Qt Multimedia. Se busca en `out/bin/vlc` o en la instalación de VLC de `Program Files/VideoLAN/VLC`. Sin ese motor, Sessions sigue funcionando y Multimedia muestra el motivo al intentar reproducir. Para trasladar la aplicación hay que disponer de VLC 3 de 64 bits y sus plugins. La integración utiliza la [API oficial de LibVLC 3](https://videolan.videolan.me/vlc-3.0/group__libvlc__media__player.html).
+
+Los contenedores MP4, MOV, M4V y M4A usan el lector FFmpeg (`avformat`) incluido en VLC. Evita los reinicios del reloj y congelaciones que el lector MP4 nativo puede producir con algunos archivos fragmentados.
+
+## Ejecutar
+
+Abrir `out/bin/sessions.exe`. Mantener junto al ejecutable las DLL y carpetas desplegadas.
+
+## Uso
+
+- Botón derecho en el lienzo: añadir texto o imagen en esa posición.
+- El menú del lienzo y el menú Insertar permiten añadir **círculos, cuadrados y rectángulos**, con nombre. Se pueden mover, redimensionar, llevar al frente y eliminar. Sus propiedades permiten cambiar nombre, posición, tamaño y color de relleno. Círculos y cuadrados mantienen ancho y alto iguales; los rectángulos permiten dimensiones independientes. Se guardan con el diseño y se muestran al lanzar la composición.
+- Al crear un texto se pide su nombre y contenido; al añadir una imagen se pide su nombre después de elegir el archivo. Los nombres se guardan y pueden cambiarse desde Propiedades. Countdown muestra los nombres de los textos en su selector; las imágenes no se incluyen en esa lista.
+- **Lanzar →** (Ctrl+Intro) envía una copia de la composición a la salida. Se puede seguir editando sin cambiar la salida hasta volver a lanzar. Los textos nuevos son blancos para resultar visibles sobre negro.
+- Botón derecho sobre **Salida** → **Seleccionar pantalla** permite elegir el monitor. **Mostrar en pantalla exterior** abre la salida a pantalla completa, manteniendo la relación 16:9 y bandas negras. Esc o **Cerrar salida exterior** cierran esa ventana. Con una sola pantalla, la opción de mostrar queda desactivada hasta conectar otra; la lista se actualiza al conectar/desconectar monitores. Si se cambia de monitor mientras la salida está abierta, se mueve al monitor elegido.
+- La vista de salida no muestra tiradores ni permite editar. Al desconectar una pantalla se cierra la ventana exterior para que no quede sobre el editor.
+- Arrastrar un elemento para moverlo; arrastrar cualquiera de sus cuatro esquinas para redimensionarlo.
+- La selección de texto se ajusta al contenido visible con un pequeño margen; los tiradores conservan la esquina opuesta al redimensionar. El cálculo se actualiza al cambiar texto, fuente o cuenta atrás, sin modificar la apariencia de los diseños existentes.
+- El texto escala con su caja; las imágenes permiten cambiar ancho y alto de forma independiente.
+- Botón derecho sobre un texto o imagen → Propiedades: posición y tamaño; para textos, contenido, fuente y color. Aceptar aplica los cambios y Cancelar los descarta.
+- El menú del elemento también permite traerlo al frente o eliminar la selección. Doble clic abre sus propiedades.
+- Los Countdowns solo se añaden en el panel inferior izquierdo: botón derecho sobre su fondo → **Add Countdown**. El panel central contiene **Fuentes** y el derecho queda libre. Cancelar o dejar un nombre vacío no crea el widget. Al abrir diseños anteriores, todos los Countdowns se colocan en el panel izquierdo para conservarlos.
+- El panel izquierdo se llama **Acciones** y comparte cabecera y fondo con Fuentes. Ambos paneles prescinden de la barra inferior de iconos; las operaciones se realizan desde el menú contextual. Arrastrar uno o varios archivos locales de audio o vídeo sobre Acciones crea directamente un Multimedia por archivo, con su nombre y ruta, detenido y sin abrir diálogos. Se pueden soltar sobre el fondo o los controles existentes; las carpetas, los archivos de otros tipos y las direcciones web no se importan. Los otros paneles no crean Multimedia al soltar archivos.
+- Botón derecho en **Acciones** → **Add Multimedia** crea un reproductor con nombre. Botón derecho sobre él → **Propiedades** permite cambiar el nombre y seleccionar un archivo de audio o vídeo. **Cue** reproduce el vídeo en la composición, sin sonido y conservando la salida anterior. El widget Multimedia solo contiene controles y contador, sin vista previa del vídeo. Los objetos Multimedia se gestionan solo desde Acciones y no aparecen en Fuentes. El vídeo se puede colocar y redimensionar directamente en la composición. El botón Lanzar no envía a salida vídeos preparados con Cue: se debe pulsar Play en Multimedia. Inicialmente ocupa el lienzo y queda detrás de textos y formas, conservando las proporciones con bandas negras cuando corresponda. **Play** envía la composición a salida y continúa la reproducción desde la posición actual con audio; también funciona sin pulsar Cue primero. Al terminar, el vídeo conserva el último fotograma tanto en composición como en salida; el contador y el deslizador permanecen al final y el reproductor queda detenido, sin volver al principio. Play inicia de nuevo desde el comienzo. Si se reproduce solo con Cue, al terminar conserva el último fotograma únicamente en composición. Cue permite preparar otra reproducción desde el principio. **Pause** congela la reproducción; **Stop** vuelve al principio y retira ese vídeo tanto de la salida como de la composición, también durante Cue o si estaba en pausa. Conserva su posición y tamaño para la siguiente reproducción. Los demás elementos de la composición permanecen en salida. Solo Play vuelve a enviar el vídeo detenido. La salida de vista previa y la pantalla exterior comparten los mismos fotogramas. La barra usa la clase **Slider** original de Radit y su QSS: se arrastra el tirador para avanzar o retroceder, con la rueda desactivada. El contador indica tiempo actual y duración en **HH:MM:SS / HH:MM:SS**. El menú común de Acciones también permite cortar, copiar, pegar, subir, bajar, eliminar y abrir las propiedades de Multimedia. Sus copias conservan nombre y archivo, reciben un identificador nuevo y se pegan detenidas sin afectar a la reproducción original. También se puede arrastrar desde su nombre o el fondo para reubicarlo entre Multimedia y Countdowns del mismo contenedor. La línea de inserción y el desplazamiento automático indican dónde quedará. Moverlo conserva la reproducción, la pausa y la posición; arrastrar el deslizador sigue buscando en el archivo y los botones conservan su función. El orden se guarda con el diseño. Se guardan nombre, orden, enlace con la fuente y ruta del archivo, sin incrustar el vídeo completo en el proyecto. Si se mueve o desaparece, se puede volver a elegir desde Propiedades. Los reproductores se abren detenidos.
+- **Fuentes** enumera por nombre los textos, imágenes y formas, con la capa superior primero. Clic en el nombre selecciona el objeto; el ojo muestra u oculta y el candado bloquea su movimiento y redimensionado. Botón derecho permite añadir, eliminar, abrir propiedades y subir o bajar una capa; doble clic abre propiedades. La visibilidad, el bloqueo y el orden se guardan con el diseño. Los objetos ocultos siguen accesibles desde la lista y se ocultan también al lanzar a salida; como los demás cambios de composición, se envían al pulsar **Lanzar**.
+- El fondo de Acciones, los Countdown y los Multimedia comparten un único menú contextual: **Add Countdown, Add Multimedia, Cortar, Copiar, Pegar, Eliminar, Subir, Bajar y Propiedades**. Clic o botón derecho selecciona la acción; el menú del fondo conserva esa selección. Ctrl+X/C/V, Supr y las opciones del menú actúan sobre la acción seleccionada. Las opciones que no se pueden usar quedan desactivadas. Subir/Bajar (Alt+↑/↓) y arrastrar desde el nombre o el fondo del widget cambian su orden dentro del panel izquierdo. Una línea marca la posición de inserción durante el arrastre; el orden se guarda con el diseño.
+- Al soltar sobre la mitad superior de otro Countdown, se inserta antes; sobre la mitad inferior, después. Los nombres, el cuerpo y los botones aceptan la suelta. Mantener el arrastre cerca del borde superior o inferior desplaza la lista automáticamente.
+- Las copias conservan duración y texto asociado, se pegan detenidas después de la selección y no reinician el texto de una cuenta que esté en marcha. Si el texto ya no existe en la composición de destino, la copia queda sin asociación. Cortar o eliminar un Countdown detiene su temporizador y conserva el texto de la composición.
+- Copiar y pegar Countdowns usa un portapapeles interno de la aplicación, como Radit, sin modificar el portapapeles de Windows.
+- Botón derecho en un `Countdown` → **Propiedades**: tiempo en segundos (1–86400) y un texto de la composición. Al aceptar, ese texto muestra inmediatamente la duración en formato **HH:MM:SS.c**, sin tener que pulsar Start. **Start** inicia la cuenta; al llegar a cero continúa hacia arriba, sin signo negativo y en rojo. **Pause** congela el tiempo y hace parpadear el texto cada medio segundo; Start reanuda la cuenta y lo deja visible. **Stop** restablece la duración y el color configurado del texto. Sin texto asociado no comienza; eliminar el texto detiene la cuenta. El parpadeo y el rojo se reproducen también en la salida, sin cambiar el color guardado en las propiedades.
+- Seleccionar un Countdown con el ratón muestra su tiempo actual en el texto asociado sin iniciarlo ni reiniciarlo. Si varios comparten texto, el último seleccionado o iniciado controla lo que se muestra.
+- Cada texto tiene un identificador persistente, por lo que el enlace se conserva al cambiar su contenido o reabrir el diseño. Los nombres, duraciones y asociaciones se guardan; las cuentas se abren detenidas. Si el texto ya está lanzado a salida, recibe los cambios del contador en directo, sin enviar los demás cambios de composición. Lanzar durante una cuenta también permite continuar la cuenta en salida.
+- Supr elimina la selección; arrastrar sobre el fondo permite seleccionar varios elementos.
+- Ctrl + rueda cambia el zoom; Ctrl+0 ajusta el lienzo y Ctrl+1 muestra tamaño real.
+- Guardar/abrir diseños `.sessions`: incluye las imágenes dentro del archivo. Se avisa antes de cerrar o reemplazar un diseño con cambios.
+
+El lienzo inicial mide 1280 × 720. La zona inferior queda como base para las siguientes funciones de la aplicación. Todavía no hay deshacer/rehacer ni exportación.
+
+## Estilo de Radit
+
+Los menús y los botones usan los SVG originales de Radit incluidos en `icons/`. El icono de Sessions adapta la letra a una **S**, conservando los colores y trazos de su logotipo. `SessionsAppIcon.svg` es el original editable, el PNG se usa en las ventanas y `sessions.ico` se integra en el ejecutable mediante `sessions.rc`. `tools/build-brand-icon.cpp` permite regenerar PNG e ICO con Qt Gui y Qt Svg. **Ayuda → Acerca de Sessions** abre la ventana de tres columnas basada en Radit, con versión, compilación, créditos y los motores utilizados. Se cierra con Esc.
+
+`radit.qss` es una copia sin modificaciones de `../radit/out/bin/radit.qss`, con su cabecera de autoría y licencia original. Se despliega junto al ejecutable y también se integra como recurso para que funcione desde cualquier carpeta de trabajo. Incluye los cuatro recursos SVG referenciados por la hoja de estilos.
+
+El contenedor usa los identificadores `Container` y `Contents` de Radit. `sessions.qss` añade únicamente estilos para los controles propios de Sessions, usando los colores de Radit.
+
+## Fundidos de salida
+
+**Opciones → Tiempo de fundido** permite elegir de 0 a 10 segundos (inicialmente 1 segundo). La duración se conserva al volver a abrir Sessions; 0 desactiva el fundido. Al pulsar Play en otro vídeo o imagen, la salida mezcla el contenido anterior con el nuevo, conservando el último fotograma del vídeo terminado hasta que el nuevo contenido está listo. Stop funde el contenido retirado hacia el fondo negro; los otros elementos de la composición permanecen. Funciona también en la pantalla exterior. Cue prepara la composición sin modificar la salida. Cambiar o detener una acción durante un fundido continúa desde la imagen que se está mostrando.
+
+## Imágenes como acciones
+
+Arrastrar una imagen local a **Acciones** crea un Multimedia con su nombre de archivo y los botones **Cue, Play y Stop**, inicialmente detenido. Se admiten los formatos que puede leer Qt (PNG, JPEG, BMP, GIF, SVG e ICO con los plugins desplegados). Las imágenes animadas se muestran como una imagen fija.
+
+**Cue** muestra la imagen en composición y conserva la salida anterior. **Play** la envía a salida, también sin Cue previo. **Stop** la retira de ambos lienzos. La imagen permanece visible hasta detenerla o sustituirla por otra acción; no tiene duración ni deslizador. Se conserva la proporción original, y se puede colocar y redimensionar en composición. No aparece en Fuentes y Lanzar no la envía sin pulsar Play. Comparte el menú contextual, copiar/pegar y la reubicación de Multimedia. El diseño guarda la ruta y la geometría; al abrirlo empieza detenida. El archivo original debe seguir disponible. Propiedades permite cambiar el nombre o elegir otro archivo.
+
+## Compilar
+
+Abrir `sessions.pro` en Qt Creator y seleccionar Desktop Qt 6.7.0 MinGW 64-bit, o ejecutar desde PowerShell:
+
+```powershell
+.\build.ps1 -Deploy -Test
+```
+
+El script usa las herramientas instaladas en `C:\Qt` y, si están disponibles, copia los binutils de reemplazo de Radit y sus DLL a `build/tools`, igual que ForgeCraft. El `.pro` también los selecciona desde Qt Creator, sin depender de que MSYS2 esté en el PATH. No modifica esos proyectos ni la instalación de Qt.
+
+Los objetos, MOC, recursos y archivos de enlace se generan dentro de la carpeta de compilación actual, separados por `debug` y `release`. Qt Creator puede usar `out` y el script `build` sin compartir ni sobrescribir archivos intermedios. Después de cambiar la configuración del proyecto, ejecutar qmake antes de compilar.
+
+Las pruebas ejercitan movimiento y redimensionado con ratón, propiedades, eliminación, guardado y apertura con imágenes integradas, y rechazo de un archivo inválido sin perder el diseño actual. Generan `build/test-results.txt` y `build/preview.png`.
+
+Para medir reproducción continua con un archivo concreto, ejecutar `out/bin/sessions.exe --playback-test "ruta/al/video.mp4"`. La prueba reproduce en composición, pasa a salida a mitad del vídeo y mide intervalos entre fotogramas, cambios de imagen, respuesta de la interfaz y tiempo total. `tests/fixtures/media-fragmented.mp4` contiene un patrón móvil generado para comprobar MP4 fragmentado. La variable de entorno `SESSIONS_MEDIA_TRACE=1` activa el registro detallado del motor para diagnóstico.
+
+## Licencia
+
+Sessions se distribuye bajo GNU GPL v3 o posterior; consulta [LICENSE](LICENSE). El diseño, los iconos y el control Slider procedentes de [Radit](https://github.com/valgaba/radit) conservan su autoría y licencia. Qt, LibVLC y los componentes de FFmpeg conservan sus licencias respectivas y se instalan por separado. El repositorio contiene el código, los recursos y los vídeos de prueba generados; no incluye ejecutables ni bibliotecas de terceros.
+

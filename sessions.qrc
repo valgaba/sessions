@@ -1,0 +1,40 @@
+<RCC>
+  <qresource prefix="/">
+    <file>radit.qss</file>
+    <file>sessions.qss</file>
+    <file>icons/Close.svg</file>
+    <file>icons/Close-hover.svg</file>
+    <file>icons/MoveLeft.svg</file>
+    <file>icons/MoveRight.svg</file>
+    <file>icons/ActionCopy.svg</file>
+    <file>icons/ActionCut.svg</file>
+    <file>icons/ActionPaste.svg</file>
+    <file>icons/Add.svg</file>
+    <file>icons/ArrowLeft.svg</file>
+    <file>icons/audio.svg</file>
+    <file>icons/audiofile.svg</file>
+    <file>icons/Color.svg</file>
+    <file>icons/eject.svg</file>
+    <file>icons/forward.svg</file>
+    <file>icons/Info.svg</file>
+    <file>icons/Load.svg</file>
+    <file>icons/New.svg</file>
+    <file>icons/Next.svg</file>
+    <file>icons/Pause.svg</file>
+    <file>icons/pending_actions.svg</file>
+    <file>icons/Play.svg</file>
+    <file>icons/PlayCue.svg</file>
+    <file>icons/properties.svg</file>
+    <file>icons/Remove.svg</file>
+    <file>icons/rewind.svg</file>
+    <file>icons/save.svg</file>
+    <file>icons/saveas.svg</file>
+    <file>icons/sessions.ico</file>
+    <file>icons/SessionsAppIcon.png</file>
+    <file>icons/SessionsAppIcon.svg</file>
+    <file>icons/SessionsLogo.svg</file>
+    <file>icons/settings.svg</file>
+    <file>icons/Stop.svg</file>
+    <file>icons/Zoom.svg</file>
+  </qresource>
+</RCC>
