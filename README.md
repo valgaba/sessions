@@ -2,11 +2,17 @@
 
 Código fuente: [valgaba/sessions](https://github.com/valgaba/sessions).
 
+## Descargar para Windows
+
+[Descargar sessions_1_0_0.zip](https://github.com/valgaba/sessions/releases/download/v1.0.0/sessions_1_0_0.zip). Versión de desarrollo para Windows de 64 bits, en fase de pruebas. Extrae la carpeta `sessions_1_0_0` completa y ejecuta `sessions.exe`. Incluye Qt, los plugins y el motor LibVLC; no requiere instalar Qt Creator ni VLC. Conserva todas las subcarpetas y bibliotecas junto al ejecutable. La descarga incluye las licencias de los componentes. Las sumas SHA-256 se publican en la misma versión de GitHub.
+
 Aplicación Qt C++ siguiendo la estructura de Radit. Arriba están la composición editable y el lienzo de salida. La zona inferior ocupa todo el ancho y contiene tres paneles de widgets, de izquierda a derecha. Las zonas superior e inferior empiezan con la misma altura, con la separación en el centro. Los separadores permiten ajustar su ancho y la altura de la zona inferior.
 
 Usa el mismo kit de Radit y ForgeCraft: **Qt Widgets 6.7.0, C++17, qmake y MinGW 11.2 de 64 bits**. No requiere módulos de audio.
 
 La reproducción de Multimedia utiliza **LibVLC 3 de 64 bits**, ya instalado en este equipo, porque el kit no incluye Qt Multimedia. Se busca en `out/bin/vlc` o en la instalación de VLC de `Program Files/VideoLAN/VLC`. Sin ese motor, Sessions sigue funcionando y Multimedia muestra el motivo al intentar reproducir. Para trasladar la aplicación hay que disponer de VLC 3 de 64 bits y sus plugins. La integración utiliza la [API oficial de LibVLC 3](https://videolan.videolan.me/vlc-3.0/group__libvlc__media__player.html).
+
+El ZIP de Releases incluye ese motor en `vlc/`, junto al ejecutable. La instalación de VLC solo es necesaria si se compila desde los fuentes sin preparar el paquete portable.
 
 Los contenedores MP4, MOV, M4V y M4A usan el lector FFmpeg (`avformat`) incluido en VLC. Evita los reinicios del reloj y congelaciones que el lector MP4 nativo puede producir con algunos archivos fragmentados.
 
@@ -46,7 +52,7 @@ El lienzo inicial mide 1280 × 720. La zona inferior queda como base para las si
 
 ## Estilo de Radit
 
-Los menús y los botones usan los SVG originales de Radit incluidos en `icons/`. El icono de Sessions adapta la letra a una **S**, conservando los colores y trazos de su logotipo. `SessionsAppIcon.svg` es el original editable, el PNG se usa en las ventanas y `sessions.ico` se integra en el ejecutable mediante `sessions.rc`. `tools/build-brand-icon.cpp` permite regenerar PNG e ICO con Qt Gui y Qt Svg. **Ayuda → Acerca de Sessions** abre la ventana de tres columnas basada en Radit, con versión, compilación, créditos y los motores utilizados. Se cierra con Esc.
+Los menús y los botones usan los SVG originales de Radit incluidos en `svn/icons/`. El icono de Sessions adapta la letra a una **S**, conservando los colores y trazos de su logotipo. `SessionsAppIcon.svg` es el original editable, el PNG se usa en las ventanas y `sessions.ico` se integra en el ejecutable mediante `sessions.rc`. `svn/tools/build-brand-icon.cpp` permite regenerar PNG e ICO con Qt Gui y Qt Svg. **Ayuda → Acerca de Sessions** abre la ventana de tres columnas basada en Radit, con versión, compilación, créditos y los motores utilizados. Se cierra con Esc.
 
 `radit.qss` es una copia sin modificaciones de `../radit/out/bin/radit.qss`, con su cabecera de autoría y licencia original. Se despliega junto al ejecutable y también se integra como recurso para que funcione desde cualquier carpeta de trabajo. Incluye los cuatro recursos SVG referenciados por la hoja de estilos.
 
@@ -64,21 +70,23 @@ Arrastrar una imagen local a **Acciones** crea un Multimedia con su nombre de ar
 
 ## Compilar
 
-Abrir `sessions.pro` en Qt Creator y seleccionar Desktop Qt 6.7.0 MinGW 64-bit, o ejecutar desde PowerShell:
+Abrir `svn/sessions.pro` en Qt Creator y seleccionar Desktop Qt 6.7.0 MinGW 64-bit, o ejecutar desde PowerShell:
 
 ```powershell
 .\build.ps1 -Deploy -Test
 ```
 
-El script usa las herramientas instaladas en `C:\Qt` y, si están disponibles, copia los binutils de reemplazo de Radit y sus DLL a `build/tools`, igual que ForgeCraft. El `.pro` también los selecciona desde Qt Creator, sin depender de que MSYS2 esté en el PATH. No modifica esos proyectos ni la instalación de Qt.
+Los fuentes, recursos y el proyecto qmake están en `svn/`. La salida principal está en `out/bin/` y los intermedios del script en `out/build/`. Para preparar el ZIP portable, ejecuta `./package.ps1` después de compilar y desplegar. Los paquetes se generan en `out/packages/`.
 
-Los objetos, MOC, recursos y archivos de enlace se generan dentro de la carpeta de compilación actual, separados por `debug` y `release`. Qt Creator puede usar `out` y el script `build` sin compartir ni sobrescribir archivos intermedios. Después de cambiar la configuración del proyecto, ejecutar qmake antes de compilar.
+El script usa las herramientas instaladas en `C:\Qt` y, si están disponibles, copia los binutils de reemplazo de Radit y sus DLL a `out/qt67-binutils`, igual que ForgeCraft. El `.pro` también los selecciona desde Qt Creator, sin depender de que MSYS2 esté en el PATH. No modifica esos proyectos ni la instalación de Qt.
 
-Las pruebas ejercitan movimiento y redimensionado con ratón, propiedades, eliminación, guardado y apertura con imágenes integradas, y rechazo de un archivo inválido sin perder el diseño actual. Generan `build/test-results.txt` y `build/preview.png`.
+Los objetos, MOC, recursos y archivos de enlace se generan dentro de la carpeta de compilación actual, separados por `debug` y `release`. Qt Creator puede usar `out/qtcreator` y el script `out/build` sin compartir ni sobrescribir archivos intermedios. Después de cambiar la configuración del proyecto, ejecutar qmake antes de compilar.
 
-Para medir reproducción continua con un archivo concreto, ejecutar `out/bin/sessions.exe --playback-test "ruta/al/video.mp4"`. La prueba reproduce en composición, pasa a salida a mitad del vídeo y mide intervalos entre fotogramas, cambios de imagen, respuesta de la interfaz y tiempo total. `tests/fixtures/media-fragmented.mp4` contiene un patrón móvil generado para comprobar MP4 fragmentado. La variable de entorno `SESSIONS_MEDIA_TRACE=1` activa el registro detallado del motor para diagnóstico.
+Las pruebas ejercitan movimiento y redimensionado con ratón, propiedades, eliminación, guardado y apertura con imágenes integradas, y rechazo de un archivo inválido sin perder el diseño actual. Generan `out/build/test-results.txt` y `out/build/preview.png`.
+
+Para medir reproducción continua con un archivo concreto, ejecutar `out/bin/sessions.exe --playback-test "ruta/al/video.mp4"`. La prueba reproduce en composición, pasa a salida a mitad del vídeo y mide intervalos entre fotogramas, cambios de imagen, respuesta de la interfaz y tiempo total. `svn/tests/fixtures/media-fragmented.mp4` contiene un patrón móvil generado para comprobar MP4 fragmentado. La variable de entorno `SESSIONS_MEDIA_TRACE=1` activa el registro detallado del motor para diagnóstico.
 
 ## Licencia
 
-Sessions se distribuye bajo GNU GPL v3 o posterior; consulta [LICENSE](LICENSE). El diseño, los iconos y el control Slider procedentes de [Radit](https://github.com/valgaba/radit) conservan su autoría y licencia. Qt, LibVLC y los componentes de FFmpeg conservan sus licencias respectivas y se instalan por separado. El repositorio contiene el código, los recursos y los vídeos de prueba generados; no incluye ejecutables ni bibliotecas de terceros.
+Sessions se distribuye bajo GNU GPL v3 o posterior; consulta [LICENSE](LICENSE). El diseño, los iconos y el control Slider procedentes de [Radit](https://github.com/valgaba/radit) conservan su autoría y licencia. Qt, LibVLC y los componentes de FFmpeg conservan sus licencias respectivas, incluidas en la carpeta `licenses/` del paquete portable. El repositorio contiene el código, los recursos y los vídeos de prueba generados; los binarios y bibliotecas se distribuyen como archivos adjuntos de Releases.
 

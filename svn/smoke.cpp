@@ -25,7 +25,7 @@ int smokeTest(QApplication &app) {
     QPointer<AboutDialog> about=w.findChild<AboutDialog *>();
     check(aboutAction && about && about->isVisible() && about->findChild<QLabel *>("AboutName")->text()=="sessions","Help menu opens Sessions about dialog in Radit layout");
     if(about) {
-        check(about->grab().save(QApplication::applicationDirPath()+"/../../build/about-sessions.png"),"save about dialog preview");
+        check(about->grab().save(QApplication::applicationDirPath()+"/../build/about-sessions.png"),"save about dialog preview");
         QTest::keyClick(about,Qt::Key_Escape);app.processEvents();
         check(!about || !about->isVisible(),"about dialog closes with Escape");
     }
@@ -100,7 +100,7 @@ int smokeTest(QApplication &app) {
                     check(texts->count() == 2, "Countdown properties lists composition texts");
                     check(texts->itemText(1) == timerText->name, "Countdown identifies associated text by persistent name");
                     texts->setCurrentIndex(1);
-                    dialog->grab().save(QApplication::applicationDirPath() + "/../../build/properties-countdown.png");
+                    dialog->grab().save(QApplication::applicationDirPath() + "/../build/properties-countdown.png");
                     dialog->accept();
                 }
             });
@@ -193,7 +193,7 @@ int smokeTest(QApplication &app) {
                     if (auto *dialog = qobject_cast<PropertiesDialog *>(app.activeModalWidget())) {
                         opened = true;
                         dialog->findChild<QDoubleSpinBox *>("property2")->setValue(440);
-                        dialog->grab().save(QApplication::applicationDirPath() + "/../../build/properties-" + (item->isImage() ? "image" : "text") + ".png");
+                        dialog->grab().save(QApplication::applicationDirPath() + "/../build/properties-" + (item->isImage() ? "image" : "text") + ".png");
                         if (accept) dialog->accept(); else dialog->reject();
                     }
                 });
@@ -215,7 +215,7 @@ int smokeTest(QApplication &app) {
     auto originalSize = picture->itemSize();
     check(openProperties(picture, false) && picture->itemSize() == originalSize, "cancel image properties preserves size");
     check(openProperties(picture, true) && picture->itemSize().width() == 440, "right click image properties edits size");
-    QTemporaryDir temp(QApplication::applicationDirPath()+"/../../build/test-XXXXXX");
+    QTemporaryDir temp(QApplication::applicationDirPath()+"/../build/test-XXXXXX");
     check(temp.isValid() && w.writeProject(temp.filePath("roundtrip.sessions")),"save project with embedded image");
     MainWindow restored;
     check(restored.readProject(temp.filePath("roundtrip.sessions")) && restored.canvas->items().size()==2,"reopen project");
@@ -349,7 +349,7 @@ int smokeTest(QApplication &app) {
                 auto *action = menu->findChild<QAction *>(actionName);
                 if (!action || !action->isEnabled()) { menu->close(); return; }
                 invoked = true;
-                if (actionName == "copyAction") menu->grab().save(QApplication::applicationDirPath()+"/../../build/countdown-menu.png");
+                if (actionName == "copyAction") menu->grab().save(QApplication::applicationDirPath()+"/../build/countdown-menu.png");
                 QTest::mouseClick(menu,Qt::LeftButton,Qt::NoModifier,menu->actionGeometry(action).center());
             }
         });
@@ -472,8 +472,8 @@ int smokeTest(QApplication &app) {
     check(mediaAdded && media && media->name()=="Vídeo de prueba","Actions context menu creates named Multimedia widget");
     if(!media)return 1;
     check(Multimedia::backendAvailable(),"LibVLC 3 backend is available");
-    const QString audioFile=QDir::cleanPath(QApplication::applicationDirPath()+"/../../build/media-test.wav");
-    const QString videoFile=QDir::cleanPath(QApplication::applicationDirPath()+"/../../tests/fixtures/media-test.mp4");
+    const QString audioFile=QDir::cleanPath(QApplication::applicationDirPath()+"/../build/media-test.wav");
+    const QString videoFile=QDir::cleanPath(QApplication::applicationDirPath()+"/../../svn/tests/fixtures/media-test.mp4");
     // Five seconds of silent PCM audio; keep the playback test self-contained.
     { QFile wave(audioFile); if(wave.open(QIODevice::WriteOnly)) {
         QDataStream stream(&wave);stream.setByteOrder(QDataStream::LittleEndian);
@@ -746,19 +746,19 @@ int smokeTest(QApplication &app) {
         check(outputColor()==QColor(Qt::black) && overlays()==0,"zero duration applies Stop immediately without an overlay");
         bool fadeDialogOpened=false;
         QTimer::singleShot(0,[&]{if(auto *dialog=qobject_cast<QDialog *>(app.activeModalWidget());dialog && dialog->objectName()=="FadeOptions"){
-            dialog->grab().save(QApplication::applicationDirPath()+"/../../build/fade-options.png");
+            dialog->grab().save(QApplication::applicationDirPath()+"/../build/fade-options.png");
             auto *seconds=dialog->findChild<QDoubleSpinBox *>("fadeSeconds");fadeDialogOpened=seconds && seconds->value()==0 && seconds->maximum()==10;if(seconds)seconds->setValue(2);dialog->reject();}});
         if(auto *action=transition.findChild<QAction *>("fadeOptions"))action->trigger();
         check(fadeDialogOpened && transition.fadeDuration()==0,"Options offers fade duration in seconds and Cancel preserves its previous value");
     }
-    check(w.grab().save(QApplication::applicationDirPath()+"/../../build/preview.png"),"save interface preview");
+    check(w.grab().save(QApplication::applicationDirPath()+"/../build/preview.png"),"save interface preview");
     return failures ? 1 : 0;
 }
 
 int playbackTest(QApplication &app) {
     const auto args=app.arguments();const int option=args.indexOf("--playback-test");
     if(option<0 || option+1>=args.size() || !QFileInfo(args[option+1]).isFile()){std::printf("PLAYBACK invalid arguments: %s\n",qPrintable(args.join(" | ")));return 2;}
-    QTemporaryDir temporary(QApplication::applicationDirPath()+"/../../build/playback-XXXXXX");
+    QTemporaryDir temporary(QApplication::applicationDirPath()+"/../build/playback-XXXXXX");
     QFile project(temporary.filePath("playback.sessions"));if(!project.open(QIODevice::WriteOnly)){std::printf("PLAYBACK cannot write fixture\n");return 2;}
     project.write(QJsonDocument(QJsonObject{{"format","sessions"},{"version",1},{"items",QJsonArray()},
         {"widgets",QJsonArray{QJsonObject{{"type","multimedia"},{"name","Prueba de reproducción"},{"file",QFileInfo(args[option+1]).absoluteFilePath()}}}}}).toJson());project.close();

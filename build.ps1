@@ -1,13 +1,17 @@
-param([switch]$Deploy, [switch]$Test)
+param([switch]$Deploy, [switch]$Test, [string]$Destination = '')
 $ErrorActionPreference = 'Stop'
 $qtBin = 'C:\Qt\6.7.0\mingw_64\bin'
 $compilerBin = 'C:\Qt\Tools\mingw1120_64\bin'
 $env:PATH = "$compilerBin;$qtBin;C:\msys64\mingw64\bin;" + $env:PATH
-$buildDir = Join-Path $PSScriptRoot 'build'
+$buildDir = Join-Path $PSScriptRoot 'out\build'
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
+if (!$Destination) { $Destination = Join-Path $PSScriptRoot 'out\bin' }
+$Destination = [System.IO.Path]::GetFullPath($Destination)
+New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+$qmakeDestination = [System.IO.Path]::GetRelativePath($buildDir, $Destination).Replace('\', '/')
 $replacement = Join-Path $PSScriptRoot '..\radit\out\qt67-binutils'
 if (Test-Path (Join-Path $replacement 'as.exe')) {
-    $localTools = Join-Path $buildDir 'tools'
+    $localTools = Join-Path $PSScriptRoot 'out\qt67-binutils'
     New-Item -ItemType Directory -Path $localTools -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $replacement 'as.exe'), (Join-Path $replacement 'ld.exe'), (Join-Path $replacement 'windres.exe') -Destination $localTools -Force
     foreach ($dll in @('libintl-8.dll', 'libiconv-2.dll', 'zlib1.dll', 'libzstd.dll')) {
@@ -15,20 +19,20 @@ if (Test-Path (Join-Path $replacement 'as.exe')) {
         if (Test-Path -LiteralPath $runtimeSource) {
             Copy-Item -LiteralPath $runtimeSource -Destination $localTools -Force
         } elseif (!(Test-Path -LiteralPath (Join-Path $localTools $dll))) {
-            throw "Falta la dependencia de compilación $dll en build/tools"
+            throw "Falta la dependencia de compilación $dll en out/qt67-binutils"
         }
     }
 }
 Push-Location $buildDir
 try {
-    & "$qtBin\qmake.exe" (Join-Path $PSScriptRoot 'sessions.pro') 'CONFIG+=release' 'CONFIG-=debug'
+    & "$qtBin\qmake.exe" (Join-Path $PSScriptRoot 'svn\sessions.pro') 'CONFIG+=release' 'CONFIG-=debug' '-after' ('DESTDIR=$$quote(' + $qmakeDestination + ')')
     if ($LASTEXITCODE) { throw 'qmake failed' }
     & "$compilerBin\mingw32-make.exe" '-j4'
     if ($LASTEXITCODE) { throw 'Build failed' }
-    $exe = Join-Path $PSScriptRoot 'out\bin\sessions.exe'
+    $exe = Join-Path $Destination 'sessions.exe'
     if ($Deploy) {
         $destination = Split-Path $exe
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'radit.qss') -Destination $destination -Force
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'svn\radit.qss') -Destination $destination -Force
         foreach ($dll in @('Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll', 'Qt6Test.dll', 'Qt6Svg.dll')) {
             Copy-Item -LiteralPath (Join-Path $qtBin $dll) -Destination $destination -Force
         }

@@ -1,5 +1,8 @@
-/build/
-/out/
+/out/*
+!/out/README.md
+!/out/bin/
+/out/bin/*
+!/out/bin/README.md
 *.pro.user
 *.pro.user.*
-/.qtc_clangd/
+**/.qtc_clangd/

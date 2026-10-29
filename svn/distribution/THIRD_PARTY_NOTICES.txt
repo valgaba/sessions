@@ -1,0 +1,31 @@
+Sessions 1.0.0
+Copyright 2026 Victor Algaba. GNU GPL version 3 or later.
+Design, icons and Slider adapted from Radit:
+https://github.com/valgaba/radit
+Source for this application: https://github.com/valgaba/sessions
+
+Qt 6.7.0 (Qt Core, Gui, Widgets, Svg, Test and plugins)
+Copyright The Qt Company Ltd. and other contributors.
+Distributed under GNU GPL v3, with component-specific third-party notices.
+Sources, license texts and third-party component information:
+https://download.qt.io/archive/qt/6.7/6.7.0/single/
+https://code.qt.io/cgit/qt/qtbase.git/tree/LICENSES?h=v6.7.0
+https://doc.qt.io/qt-6.7/licenses-used-in-qt.html
+
+LibVLC 3 and VLC plugins, including the FFmpeg demuxer and codecs
+Copyright VideoLAN, VLC contributors, FFmpeg developers and other contributors.
+Individual components retain their respective GPL/LGPL and other licenses.
+The installed VLC distribution's COPYING and AUTHORS are included.
+Corresponding VLC sources: https://download.videolan.org/pub/videolan/vlc/
+Windows dependency sources: https://download.videolan.org/pub/videolan/contrib/
+FFmpeg sources and notices: https://ffmpeg.org/download.html
+
+GCC / MinGW runtime libraries (libgcc, libstdc++, winpthreads)
+Copyright Free Software Foundation, Inc. and MinGW-w64 contributors.
+GCC runtimes: GPL v3 with GCC Runtime Library Exception 3.1.
+MinGW-w64 runtime: see mingw-w64 COPYING notices.
+Sources: https://gcc.gnu.org/releases.html
+https://www.mingw-w64.org/
+
+All libraries remain separate DLLs. This package contains no user projects,
+personal settings, recordings or test executables.

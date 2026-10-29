@@ -9,7 +9,7 @@ int smokeTest(QApplication &app);
 int playbackTest(QApplication &app);
 int main(int argc,char **argv){
     QApplication app(argc,argv);app.setApplicationName("Sessions");app.setOrganizationName("Sessions");
-    app.setApplicationVersion("0.1.0");app.setWindowIcon(QIcon(":/icons/SessionsAppIcon.png"));
+    app.setApplicationVersion("1.0.0");app.setWindowIcon(QIcon(":/icons/SessionsAppIcon.png"));
     app.setStyle(QStyleFactory::create("Windows"));app.setFont(QFont("Tahoma",9));
     QPalette palette = app.style()->standardPalette();
     palette.setColor(QPalette::Window, QColor("#181e2c"));
