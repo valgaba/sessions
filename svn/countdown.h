@@ -3,6 +3,7 @@
 #include <QPointer>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QStringList>
 #include "canvas.h"
 
 class QLabel;
@@ -22,7 +23,12 @@ public:
     void configure(int seconds, CanvasItem *text, bool updateText = true);
     int durationSeconds() const { return duration; }
     int remainingSeconds() const;
+    QString outputFormat() const { return format; }
+    static QStringList outputFormats();
+    bool setOutputFormat(const QString &value, bool updateText = true);
     CanvasItem *associatedText() const { return target.data(); }
+    CanvasItem *totalText() const { return totalTarget.data(); }
+    void setTotalText(CanvasItem *text, bool updateText = true);
 public slots:
     void start();
     void pause();
@@ -41,9 +47,11 @@ private:
     void setState(State state);
     void tick();
     void publish(bool updateText = true);
+    QString formattedTime(qint64 milliseconds) const;
     bool validTarget() const;
     void updateTitle();
     QString countdownName = "Countdown";
+    QString format = "MM:SS.C";
     State currentState = State::Stopped;
     QLabel *status;
     QLabel *title;
@@ -52,6 +60,7 @@ private:
     QPushButton *stopButton;
     QPointer<QGraphicsScene> composition;
     QPointer<CanvasItem> target;
+    QPointer<CanvasItem> totalTarget;
     QMetaObject::Connection targetDestroyed;
     QTimer timer;
     QElapsedTimer elapsed;

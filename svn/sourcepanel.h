@@ -15,6 +15,9 @@ signals:
     void edited();
     void propertiesRequested(CanvasItem *item);
     void addRequested(QString type);
+    void clipboardMenuRequested(QMenu *menu, CanvasItem *item);
+    void copyRequested(CanvasItem *item, bool cut);
+    void pasteRequested();
 private:
     CanvasItem *currentItem() const;
     void selectCurrent();

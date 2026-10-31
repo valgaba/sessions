@@ -18,6 +18,8 @@
     <file>icons/forward.svg</file>
     <file>icons/Info.svg</file>
     <file>icons/Load.svg</file>
+    <file>icons/Loop.svg</file>
+    <file>icons/Purge.svg</file>
     <file>icons/New.svg</file>
     <file>icons/Next.svg</file>
     <file>icons/Pause.svg</file>
@@ -36,5 +38,8 @@
     <file>icons/settings.svg</file>
     <file>icons/Stop.svg</file>
     <file>icons/Zoom.svg</file>
+    <file>icons/zoom-in.svg</file>
+    <file>icons/zoom-out.svg</file>
+    <file>icons/ZoomOut.svg</file>
   </qresource>
 </RCC>

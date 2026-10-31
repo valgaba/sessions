@@ -17,7 +17,7 @@ PropertiesDialog::PropertiesDialog(CanvasItem *value, QWidget *parent)
     for (int i = 0; i < 4; ++i) {
         fields[i] = new QDoubleSpinBox;
         fields[i]->setObjectName(QString("property%1").arg(i));
-        fields[i]->setRange(i < 2 ? -16000 : 24, 16000);
+        fields[i]->setRange(i < 2 ? -16000 : item->shapeType()==CanvasItem::Shape::Line?1:24, 16000);
         fields[i]->setDecimals(1);
         fields[i]->setSuffix(" px");
         fields[i]->setValue(values[i]);
@@ -48,7 +48,7 @@ PropertiesDialog::PropertiesDialog(CanvasItem *value, QWidget *parent)
             if (next.isValid()) color = next;
         });
     } else if (item->isShape()) {
-        auto *colorButton = new QPushButton("Color de relleno…");
+        auto *colorButton = new QPushButton(item->shapeType()==CanvasItem::Shape::Line?"Color de línea…":"Color de relleno…");
         colorButton->setObjectName("shapeColor");
         layout->addWidget(colorButton);
         connect(colorButton, &QPushButton::clicked, this, [this] {

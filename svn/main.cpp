@@ -7,6 +7,7 @@
 #include <QIcon>
 int smokeTest(QApplication &app);
 int playbackTest(QApplication &app);
+int mediaLoadTest(QApplication &app);
 int main(int argc,char **argv){
     QApplication app(argc,argv);app.setApplicationName("Sessions");app.setOrganizationName("Sessions");
     app.setApplicationVersion("1.0.0");app.setWindowIcon(QIcon(":/icons/SessionsAppIcon.png"));
@@ -31,5 +32,6 @@ int main(int argc,char **argv){
     app.setStyleSheet(QString::fromUtf8(raditStyle.readAll()) + "\n" + QString::fromUtf8(sessionsStyle.readAll()));
     if(app.arguments().contains("--smoke-test"))return smokeTest(app);
     if(app.arguments().contains("--playback-test"))return playbackTest(app);
+    if(app.arguments().contains("--media-load-test"))return mediaLoadTest(app);
     MainWindow window;window.show();return app.exec();
 }

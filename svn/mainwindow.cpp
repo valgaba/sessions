@@ -62,6 +62,20 @@ MainWindow::MainWindow() {
     canvas = new QGraphicsScene(this); canvas->setSceneRect(0,0,1280,720);
     canvas->setBackgroundBrush(Qt::black);
     view = new CanvasView; view->setScene(canvas); compositionLayout->addWidget(view);
+    auto *zoomRow=new QWidget;zoomRow->setObjectName("CompositionZoomBar");zoomRow->setFixedWidth(284);
+    auto *zoomLayout=new QHBoxLayout(zoomRow);zoomLayout->setContentsMargins(0,0,0,0);zoomLayout->setSpacing(5);zoomLayout->addStretch();
+    auto *zoomLevel=new QLabel;zoomLevel->setObjectName("compositionZoomLevel");zoomLevel->setMinimumWidth(56);zoomLevel->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+    auto *less=new QToolButton;less->setObjectName("compositionZoomOut");less->setIcon(QIcon(":/icons/zoom-out.svg"));less->setIconSize(QSize(18,18));less->setToolTip("Alejar");less->setAccessibleName("Alejar composición");less->setFixedSize(24,24);zoomLayout->addWidget(less);
+    auto *zoom=new QSlider(Qt::Horizontal);zoom->setObjectName("compositionZoom");zoom->setRange(0,1000);zoom->setSingleStep(3);zoom->setPageStep(25);zoom->setFixedSize(150,26);zoom->setAccessibleName("Zoom de composición");zoom->setToolTip("Zoom de composición · Ctrl+rueda · Ctrl+Mayús+rueda para ajuste fino");zoomLayout->addWidget(zoom);
+    auto *more=new QToolButton;more->setObjectName("compositionZoomIn");more->setIcon(QIcon(":/icons/zoom-in.svg"));more->setIconSize(QSize(18,18));more->setToolTip("Acercar");more->setAccessibleName("Acercar composición");more->setFixedSize(24,24);zoomLayout->addWidget(more);
+    zoomLayout->addWidget(zoomLevel);
+    auto *zoomFooter=new QHBoxLayout;zoomFooter->setContentsMargins(0,0,0,0);zoomFooter->addStretch();zoomFooter->addWidget(zoomRow);compositionLayout->addLayout(zoomFooter);
+    connect(less,&QToolButton::clicked,view,&CanvasView::zoomOut);connect(more,&QToolButton::clicked,view,&CanvasView::zoomIn);
+    connect(zoom,&QSlider::valueChanged,this,[this](int value){view->setZoom(.05*std::pow(640.0,value/1000.0));});
+    connect(view,&CanvasView::zoomChanged,this,[zoom,zoomLevel](qreal factor){
+        const QSignalBlocker blocker(zoom);zoom->setValue(qRound(1000*std::log(factor/.05)/std::log(640.0)));
+        zoomLevel->setText(QString::number(factor*100,'f',factor<1?1:0)+" %");
+    });
     top->addWidget(composition);
     outputScene = new QGraphicsScene(this);
     outputScene->setSceneRect(canvas->sceneRect()); outputScene->setBackgroundBrush(Qt::black);
@@ -101,11 +115,14 @@ MainWindow::MainWindow() {
             sources = new SourcePanel(canvas); bottomPanels->addWidget(sources); bottomPanels->setStretchFactor(panel, 1);
             connect(sources,&SourcePanel::edited,this,&MainWindow::changed);
             connect(sources,&SourcePanel::propertiesRequested,this,&MainWindow::editText);
+            connect(sources,&SourcePanel::clipboardMenuRequested,this,[this](QMenu *menu,CanvasItem *item){addClipboardActions(menu,item?QList<CanvasItem *>{item}:QList<CanvasItem *>{});});
+            connect(sources,&SourcePanel::copyRequested,this,[this](CanvasItem *item,bool cut){copyItems({item},cut);});
+            connect(sources,&SourcePanel::pasteRequested,this,[this]{pasteItems();});
             connect(sources,&SourcePanel::addRequested,this,[this](const QString &type) {
                 const QPointF position(80,80);
                 if(type=="text")emit view->addTextRequested(position);
                 else if(type=="image")emit view->addImageRequested(position);
-                else emit view->addShapeRequested(type=="circle"?CanvasItem::Shape::Circle:type=="square"?CanvasItem::Shape::Square:CanvasItem::Shape::Rectangle,position);
+                else emit view->addShapeRequested(type=="circle"?CanvasItem::Shape::Circle:type=="square"?CanvasItem::Shape::Square:type=="line"?CanvasItem::Shape::Line:CanvasItem::Shape::Rectangle,position);
             });
             continue;
         }
@@ -123,7 +140,7 @@ MainWindow::MainWindow() {
         bottomPanels->setStretchFactor(panel, 1);
         if (panel == 0) connect(container, &WidgetContainer::addCountdownRequested, this, [this] {
             bool ok;
-            QString name = QInputDialog::getText(this, "Add Countdown", "Nombre:", QLineEdit::Normal, "Countdown", &ok).trimmed();
+            QString name = QInputDialog::getText(this, "Add Countdown", "Nombre:", QLineEdit::Normal, suggestedElementName("countdown"), &ok).trimmed();
             if (!ok || name.isEmpty()) return;
             auto *countdown = createCountdown(name);
             bottom->selectCountdown(countdown);
@@ -139,16 +156,16 @@ MainWindow::MainWindow() {
         changed();
     });
     connect(bottom,&WidgetContainer::addMultimediaRequested,this,[this] {
-        bool ok;QString name=QInputDialog::getText(this,"Add Multimedia","Nombre:",QLineEdit::Normal,"Multimedia",&ok).trimmed();
+        bool ok;QString name=QInputDialog::getText(this,"Add Multimedia","Nombre:",QLineEdit::Normal,suggestedElementName("multimedia"),&ok).trimmed();
         if(!ok || name.isEmpty())return;
         createMultimedia(name);changed();
     });
     connect(bottom, &WidgetContainer::contentsChanged, this, &MainWindow::changed);
-    connect(bottom,&WidgetContainer::pasteMultimediaRequested,this,[this](const QString &name,const QString &file,int index){
-        auto *media=createMultimedia(name,file);bottom->moveWidget(media,index);bottom->selectAction(media);changed();
+    connect(bottom,&WidgetContainer::pasteMultimediaRequested,this,[this](const QString &name,const QString &file,bool loop,int index,bool purge,bool next,bool mix){
+        auto *media=createMultimedia(name,file,{},loop);media->setPurge(purge);media->setNext(next);media->setMix(mix);bottom->moveWidget(media,index);bottom->selectAction(media);changed();
     });
-    connect(bottom, &WidgetContainer::pasteCountdownRequested, this, [this](const QString &name, int seconds, const QString &textId, int index) {
-        auto *countdown = createCountdown(name,seconds,textId,false);
+    connect(bottom, &WidgetContainer::pasteCountdownRequested, this, [this](const QString &name, int seconds, const QString &textId, int index, const QString &format,const QString &totalTextId) {
+        auto *countdown = createCountdown(name,seconds,textId,false,format,totalTextId);
         bottom->moveCountdown(countdown,index);
         bottom->selectCountdown(countdown);
         changed();
@@ -179,7 +196,7 @@ MainWindow::MainWindow() {
         dialog.setObjectName("AddTextDialog"); dialog.setWindowTitle("Añadir texto"); dialog.resize(420,240);
         auto *layout = new QVBoxLayout(&dialog);
         auto *form = new QFormLayout;
-        auto *name = new QLineEdit; name->setObjectName("elementName");
+        auto *name = new QLineEdit(suggestedElementName("texto")); name->setObjectName("elementName");name->selectAll();
         auto *text = new QPlainTextEdit("Nuevo texto"); text->setObjectName("elementText");
         form->addRow("Nombre:", name); form->addRow("Texto:", text); layout->addLayout(form);
         auto *buttons = new QDialogButtonBox;
@@ -187,6 +204,7 @@ MainWindow::MainWindow() {
         buttons->addButton("Cancelar", QDialogButtonBox::RejectRole); accept->setEnabled(false);
         auto validate = [=] { accept->setEnabled(!name->text().trimmed().isEmpty() && !text->toPlainText().isEmpty()); };
         connect(name, &QLineEdit::textChanged, &dialog, validate); connect(text, &QPlainTextEdit::textChanged, &dialog, validate);
+        validate();
         connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject); layout->addWidget(buttons);
         if (dialog.exec() != QDialog::Accepted || name->text().trimmed().isEmpty()) return;
@@ -198,26 +216,31 @@ MainWindow::MainWindow() {
         QImage image(path);
         if (image.isNull()) { QMessageBox::warning(this,"Imagen","No se ha podido leer la imagen."); return; }
         bool ok;
-        QString name = QInputDialog::getText(this,"Añadir imagen","Nombre:",QLineEdit::Normal,QFileInfo(path).completeBaseName(),&ok).trimmed();
+        QString name = QInputDialog::getText(this,"Añadir imagen","Nombre:",QLineEdit::Normal,suggestedElementName("imagen"),&ok).trimmed();
         if (!ok || name.isEmpty()) return;
         auto *item = new CanvasItem(image); item->name = name; addItem(item,p);
     };
     action(insert,"Añadir texto…",QKeySequence("Ctrl+T"),[this,addText]{addText({80,80});});
     action(insert,"Añadir imagen…",QKeySequence("Ctrl+I"),[this,addImage]{addImage({80,80});});
     auto addShape = [this](CanvasItem::Shape shape, QPointF pos) {
-        QString label = shape == CanvasItem::Shape::Circle ? "Círculo" : shape == CanvasItem::Shape::Square ? "Cuadrado" : "Rectángulo";
+        QString label = shape == CanvasItem::Shape::Circle ? "Círculo" : shape == CanvasItem::Shape::Square ? "Cuadrado" : shape==CanvasItem::Shape::Line?"Línea":"Rectángulo";
         bool ok;
-        QString name = QInputDialog::getText(this, "Añadir " + label.toLower(), "Nombre:", QLineEdit::Normal, label, &ok).trimmed();
+        QString name = QInputDialog::getText(this, "Añadir " + label.toLower(), "Nombre:", QLineEdit::Normal, suggestedElementName(label.toLower()), &ok).trimmed();
         if (!ok || name.isEmpty()) return;
         auto *item = new CanvasItem(shape); item->name = name; addItem(item,pos);
     };
     insert->addSeparator();
-    action(insert,"Añadir círculo…",{},[addShape]{addShape(CanvasItem::Shape::Circle,{80,80});});
-    action(insert,"Añadir cuadrado…",{},[addShape]{addShape(CanvasItem::Shape::Square,{80,80});});
-    action(insert,"Añadir rectángulo…",{},[addShape]{addShape(CanvasItem::Shape::Rectangle,{80,80});});
+    auto *shapesMenu=insert->addMenu(QIcon(":/icons/Add.svg"),"Formas básicas");
+    action(shapesMenu,"Añadir círculo…",{},[addShape]{addShape(CanvasItem::Shape::Circle,{80,80});});
+    action(shapesMenu,"Añadir cuadrado…",{},[addShape]{addShape(CanvasItem::Shape::Square,{80,80});});
+    action(shapesMenu,"Añadir rectángulo…",{},[addShape]{addShape(CanvasItem::Shape::Rectangle,{80,80});});
+    auto *lineAction=shapesMenu->addAction(QIcon(":/icons/Add.svg"),"Añadir línea…");connect(lineAction,&QAction::triggered,this,[addShape]{addShape(CanvasItem::Shape::Line,{80,80});});
     connect(view, &CanvasView::addShapeRequested, this, addShape);
     connect(view,&CanvasView::addTextRequested,this,addText); connect(view,&CanvasView::addImageRequested,this,addImage);
     connect(view,&CanvasView::deleteRequested,this,&MainWindow::removeSelection);
+    connect(view,&CanvasView::clipboardMenuRequested,this,[this](QMenu *menu,CanvasItem *,QPointF position){addClipboardActions(menu,selectedCanvasItems(),position,true);});
+    connect(view,&CanvasView::copyRequested,this,[this](bool cut){copyItems(selectedCanvasItems(),cut);});
+    connect(view,&CanvasView::pasteRequested,this,[this]{pasteItems();});
     connect(view,&CanvasView::editRequested,this,&MainWindow::editText);
     connect(view, &CanvasView::bringToFrontRequested, this, [this](CanvasItem *item) {
         qreal z = 0;
@@ -226,13 +249,16 @@ MainWindow::MainWindow() {
         changed();
     });
     action(visual,"Ajustar lienzo",QKeySequence("Ctrl+0"),[this]{view->fitCanvas();});
-    action(visual,"Tamaño real",QKeySequence("Ctrl+1"),[this]{view->resetTransform();});
+    action(visual,"Tamaño real",QKeySequence("Ctrl+1"),[this]{view->setZoom(1);});
+    auto *zoomIn=visual->addAction(QIcon(":/icons/Zoom.svg"),"Acercar");zoomIn->setShortcut(QKeySequence::ZoomIn);connect(zoomIn,&QAction::triggered,view,&CanvasView::zoomIn);
+    auto *zoomOut=visual->addAction(QIcon(":/icons/Zoom.svg"),"Alejar");zoomOut->setShortcut(QKeySequence::ZoomOut);connect(zoomOut,&QAction::triggered,view,&CanvasView::zoomOut);
     auto *help=menuBar()->addMenu("A&yuda");
     auto *about=help->addAction(QIcon(":/icons/Info.svg"),"Acerca de Sessions…");about->setObjectName("aboutSessions");
     connect(about,&QAction::triggered,this,[this]{(new AboutDialog(this))->show();});
-    statusBar()->showMessage("Listo — botón derecho sobre el lienzo para empezar");
     refresh();
     QTimer::singleShot(0,view,&CanvasView::fitCanvas);
+
+     this->showMaximized();
 }
 MainWindow::~MainWindow() {
     fadeDurationMs=0;cancelOutputFade();
@@ -252,7 +278,10 @@ void MainWindow::launchComposition() {
     for (auto *base : canvas->items(Qt::AscendingOrder)) {
         auto *source = dynamic_cast<CanvasItem *>(base);
         if (!source) continue;
-        if(!source->mediaId.isEmpty() && (!activeMedia || activeMedia->id!=source->mediaId))continue;
+        if(!source->mediaId.isEmpty()) {
+            bool present=false;for(const auto &media:outputMedia)if(media && media->id==source->mediaId)present=true;
+            if(!present)continue;
+        }
         auto *copy = source->isShape() ? new CanvasItem(source->shapeType()) : source->isImage() ? new CanvasItem(source->image) : new CanvasItem(source->text);
         copy->id = source->id;
         copy->mediaId = source->mediaId;
@@ -264,8 +293,7 @@ void MainWindow::launchComposition() {
         copy->setFlags(QGraphicsItem::GraphicsItemFlags());
         outputScene->addItem(copy);
     }
-    startOutputFade(previous);
-    statusBar()->showMessage("Composición enviada a salida — los siguientes cambios se enviarán al volver a lanzar");
+    balanceMediaLayers();startOutputFade(previous);
 }
 void MainWindow::setFadeDuration(int milliseconds) {fadeDurationMs=qBound(0,milliseconds,10000);}
 void MainWindow::showFadeOptions() {
@@ -362,15 +390,16 @@ bool MainWindow::showExternalOutput(QScreen *screen) {
 }
 void MainWindow::refresh() {
     sources->synchronize();
-    statusBar()->showMessage(QString("%1 elemento(s) — botón derecho para añadir o abrir propiedades").arg(canvas->items().size()));
 }
-Countdown *MainWindow::createCountdown(const QString &name, int seconds, const QString &textId, bool updateText) {
+Countdown *MainWindow::createCountdown(const QString &name, int seconds, const QString &textId, bool updateText, const QString &format, const QString &totalTextId) {
     auto *countdown = new Countdown;
     countdown->setName(name);
     countdown->setCompositionScene(canvas);
+    countdown->setOutputFormat(format,false);
     CanvasItem *target = nullptr;
     for (auto *base : canvas->items()) if (auto *item = dynamic_cast<CanvasItem *>(base); item && item->id == textId && item->isText()) target = item;
     countdown->configure(seconds, target, updateText);
+    for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->id==totalTextId)countdown->setTotalText(item,updateText);
     connect(countdown, &Countdown::configurationChanged, this, &MainWindow::changed);
     connect(countdown, &Countdown::textUpdated, this, [this](CanvasItem *source) {
         for (auto *base : outputScene->items()) if (auto *item = dynamic_cast<CanvasItem *>(base); item && item->id == source->id) {
@@ -390,8 +419,8 @@ CanvasItem *MainWindow::prepareVideo(Multimedia *media,const QImage &frame) {
     item->setVisible(previewMedia==media);
     return addItem(item,canvas->sceneRect().topLeft());
 }
-Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file,const QString &id) {
-    auto *media=new Multimedia;if(!id.isEmpty())media->id=id;media->configure(name,file);bottom->addWidget(media);
+Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file,const QString &id,bool loop) {
+    auto *media=new Multimedia;if(!id.isEmpty())media->id=id;media->configure(name,file);if(loop)media->setLoop(true);bottom->addWidget(media);
     auto selectPreview=[this,media]{
         previewMedia=media;
         for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && !item->mediaId.isEmpty())item->setVisible(item->mediaId==media->id && !media->currentFrame().isNull());
@@ -401,34 +430,65 @@ Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file
         for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id)item->setVisible(false);
     };
     connect(media,&Multimedia::playbackStopped,this,hideCompositionVideo);
-    connect(media,&Multimedia::cueRequested,this,[this,media,selectPreview]{if(activeMedia==media){activeMedia.clear();pendingMediaFade=false;}selectPreview();});
+    connect(media,&Multimedia::cueRequested,this,[this,media,selectPreview]{outputMedia.removeAll(media);if(activeMedia==media){activeMedia.clear();pendingMediaFade=false;}selectPreview();});
     connect(media,&Multimedia::playbackStopped,this,[this,media]{
         bool present=false;
         for(auto *base:outputScene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id)present=true;
         const QImage previous=present && fadeDurationMs>0?captureOutput():QImage();
         if(activeMedia==media){activeMedia.clear();pendingMediaFade=false;}
+        outputMedia.removeAll(media);
         for(auto *base:outputScene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id)delete item;
-        if(present)startOutputFade(previous);
+        balanceMediaLayers();if(present)startOutputFade(previous);
     });
-    connect(media,&Multimedia::playRequested,this,[this,media,selectPreview]{
-        if(activeMedia!=media)pendingMediaFade=true;
-        if(activeMedia && activeMedia!=media)activeMedia->pause();
-        activeMedia=media;
-        selectPreview();
-        // A restarted video may still cache its previous final frame. Wait for
-        // a fresh decoded frame before replacing the current output.
-        if(media->hasCurrentFrame() && prepareVideo(media,media->currentFrame()))launchComposition();
-    });
+    connect(media,&Multimedia::playRequested,this,[this,media]{launchMedia(media,media->mixes());});
     connect(media,&Multimedia::frameReady,this,[this,media](const QImage &frame){
-        auto *source=prepareVideo(media,frame);if(!source || activeMedia!=media)return;
+        auto *source=prepareVideo(media,frame);if(!source || !outputMedia.contains(media))return;
         if(pendingMediaFade){launchComposition();return;}
         bool found=false;
         for(auto *base:outputScene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id){item->setVideoFrame(frame);found=true;}
         if(!found)launchComposition();
     });
+    connect(media,&Multimedia::playbackFinished,this,[this,media]{
+        if(media->isCue() || !media->isFinished())return;
+        const auto ordered=bottom->widgetsInOrder();const int index=ordered.indexOf(media);
+        QPointer<Multimedia> next;
+        for(int i=index+1;index>=0 && i<ordered.size();++i)if(auto *candidate=qobject_cast<Multimedia *>(ordered[i])) {if(candidate->playsNext())next=candidate;break;}
+        if(next)next->play();
+        if(media->purges()) {
+            outputMedia.removeAll(media);if(activeMedia==media)activeMedia.clear();if(previewMedia==media)previewMedia.clear();
+            bottom->removeWidget(media);media->deleteLater();changed();
+        }
+    },Qt::QueuedConnection);
     connect(media,&Multimedia::configurationChanged,this,&MainWindow::changed);return media;
 }
+void MainWindow::launchMedia(Multimedia *media,bool mix) {
+    outputMedia.removeAll(QPointer<Multimedia>());
+    if(!mix) {
+        if(activeMedia!=media || outputMedia.size()>1)pendingMediaFade=true;
+        for(const auto &other:outputMedia)if(other && other!=media)other->pause();
+        outputMedia.clear();
+    }
+    if(!outputMedia.contains(media))outputMedia.append(media);
+    activeMedia=media;previewMedia=media;
+    for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && !item->mediaId.isEmpty())item->setVisible(item->mediaId==media->id && !media->currentFrame().isNull());
+    if(media->hasCurrentFrame() && prepareVideo(media,media->currentFrame()))launchComposition();
+}
+void MainWindow::balanceMediaLayers() {
+    qreal highest=-1;for(auto *base:outputScene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && !item->mediaId.isEmpty())highest=qMax(highest,item->zValue());
+    int count=0;
+    for(const auto &media:outputMedia)if(media)for(auto *base:outputScene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id) {
+        item->setZValue(highest-outputMedia.size()+count);item->setOpacity(1.0/(++count));
+    }
+}
 void MainWindow::changed(){dirty=true;setWindowModified(true);refresh();}
+QString MainWindow::suggestedElementName(const QString &base) const {
+    QSet<QString> names;
+    for(auto *entry:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(entry))names.insert(item->name.toCaseFolded());
+    for(auto *countdown:findChildren<Countdown *>())names.insert(countdown->name().toCaseFolded());
+    for(auto *media:findChildren<Multimedia *>())names.insert(media->name().toCaseFolded());
+    int number=1;while(names.contains((base+QString::number(number)).toCaseFolded()))++number;
+    return base+QString::number(number);
+}
 CanvasItem *MainWindow::addItem(CanvasItem *item,QPointF pos){
     canvas->clearSelection(); canvas->addItem(item);item->setPos(pos);
     connect(item,&CanvasItem::edited,this,&MainWindow::changed);
@@ -436,6 +496,63 @@ CanvasItem *MainWindow::addItem(CanvasItem *item,QPointF pos){
     item->setSelected(true);changed();return item;
 }
 void MainWindow::removeSelection(){ auto items=canvas->selectedItems();if(items.isEmpty())return;for(auto *item:items)delete item;changed(); }
+namespace {
+CanvasItem *clipboardClone(const CanvasItem *source,bool preserveId) {
+    auto *copy=source->isShape()?new CanvasItem(source->shapeType()):source->isImage()?new CanvasItem(source->image):new CanvasItem(source->text);
+    if(preserveId)copy->id=source->id;
+    copy->name=source->name;copy->color=source->color;copy->setTextFont(source->font);
+    copy->setItemSize(source->itemSize());copy->setPos(source->pos());copy->setZValue(source->zValue());
+    copy->setVisible(source->isVisible());copy->setLocked(source->isLocked());return copy;
+}
+}
+QList<CanvasItem *> MainWindow::selectedCanvasItems() const {
+    QList<CanvasItem *> items;
+    for(auto *base:canvas->items(Qt::AscendingOrder))if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->isSelected() && item->mediaId.isEmpty())items.append(item);
+    return items;
+}
+void MainWindow::addClipboardActions(QMenu *menu,const QList<CanvasItem *> &items,const QPointF &position,bool usePosition) {
+    QList<QPointer<CanvasItem>> live;
+    for(auto *item:items)if(item && item->scene()==canvas && item->mediaId.isEmpty())live.append(item);
+    auto *copy=menu->addAction(QIcon(":/icons/ActionCopy.svg"),"Copiar\tCtrl+C");copy->setObjectName("itemCopy");copy->setEnabled(!live.isEmpty());
+    auto *cut=menu->addAction(QIcon(":/icons/ActionCut.svg"),"Cortar\tCtrl+X");cut->setObjectName("itemCut");cut->setEnabled(!live.isEmpty());
+    auto *paste=menu->addAction(QIcon(":/icons/ActionPaste.svg"),"Pegar\tCtrl+V");paste->setObjectName("itemPaste");paste->setEnabled(!itemClipboard.isEmpty());
+    auto performCopy=[this,live](bool cut){QList<CanvasItem *> items;for(const auto &item:live)if(item)items.append(item.data());copyItems(items,cut);};
+    connect(copy,&QAction::triggered,this,[performCopy]{performCopy(false);});connect(cut,&QAction::triggered,this,[performCopy]{performCopy(true);});
+    connect(paste,&QAction::triggered,this,[this,position,usePosition]{pasteItems(position,usePosition);});
+}
+void MainWindow::copyItems(const QList<CanvasItem *> &requested,bool cut) {
+    QList<CanvasItem *> items;
+    for(auto *item:requested)if(item && item->scene()==canvas && item->mediaId.isEmpty() && !items.contains(item))items.append(item);
+    if(items.isEmpty())return;
+    itemClipboard.clear();cutTextAssociations.clear();cutTotalAssociations.clear();clipboardIsCut=cut;pasteCount=0;
+    for(auto *item:items)itemClipboard.append(std::shared_ptr<CanvasItem>(clipboardClone(item,true)));
+    if(!cut)return;
+    for(auto *countdown:findChildren<Countdown *>())if(auto *text=countdown->associatedText();text && items.contains(text)) {
+        cutTextAssociations[text->id].append(countdown);
+        countdown->configure(countdown->durationSeconds(),nullptr,false);
+    }
+    for(auto *countdown:findChildren<Countdown *>())if(auto *text=countdown->totalText();text && items.contains(text)) {
+        cutTotalAssociations[text->id].append(countdown);countdown->setTotalText(nullptr,false);
+    }
+    for(auto *item:items)delete item;
+    changed();
+}
+void MainWindow::pasteItems(const QPointF &position,bool usePosition) {
+    if(itemClipboard.isEmpty())return;
+    QRectF bounds;for(const auto &snapshot:itemClipboard)bounds=bounds.united(snapshot->mapRectToScene(snapshot->selectionRect()));
+    ++pasteCount;const QPointF delta=usePosition?position-bounds.topLeft():clipboardIsCut?QPointF():QPointF(20*pasteCount,20*pasteCount);
+    qreal z=0;QSet<QString> ids;for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base)){z=qMax(z,item->zValue());ids.insert(item->id);}
+    QList<CanvasItem *> pasted;
+    for(const auto &snapshot:itemClipboard) {
+        const bool preserve=clipboardIsCut && !ids.contains(snapshot->id);
+        auto *copy=clipboardClone(snapshot.get(),preserve);if(!preserve)copy->name+=" (copia)";
+        copy->setZValue(++z);addItem(copy,snapshot->pos()+delta);ids.insert(copy->id);pasted.append(copy);
+        if(preserve && copy->isText())for(const auto &countdown:cutTextAssociations.value(snapshot->id))if(countdown && !countdown->associatedText())countdown->configure(countdown->durationSeconds(),copy);
+        if(preserve && copy->isText())for(const auto &countdown:cutTotalAssociations.value(snapshot->id))if(countdown && !countdown->totalText())countdown->setTotalText(copy);
+    }
+    canvas->clearSelection();for(auto *item:pasted)item->setSelected(true);
+    clipboardIsCut=false;cutTextAssociations.clear();cutTotalAssociations.clear();changed();
+}
 void MainWindow::editText(CanvasItem *item) {
     if (!item) return;
     PropertiesDialog dialog(item, this);
@@ -453,10 +570,11 @@ bool MainWindow::writeProject(const QString &path){
     QJsonArray widgets;
     for (int panel = 0; panel < countdownContainers.size(); ++panel)
         for (auto *base : countdownContainers[panel]->widgetsInOrder()) {
-            if (auto *media=qobject_cast<Multimedia *>(base))widgets.append(QJsonObject{{"type","multimedia"},{"id",media->id},{"name",media->name()},{"file",media->filePath()},{"panel",0}});
+            if (auto *media=qobject_cast<Multimedia *>(base))widgets.append(QJsonObject{{"type","multimedia"},{"id",media->id},{"name",media->name()},{"file",media->filePath()},{"loop",media->loops()},{"purge",media->purges()},{"next",media->playsNext()},{"mix",media->mixes()},{"panel",0}});
             else if (auto *countdown = qobject_cast<Countdown *>(base))
             widgets.append(QJsonObject{{"type", "countdown"}, {"name", countdown->name()}, {"seconds", countdown->durationSeconds()}, {"panel",panel},
-                {"textId", countdown->associatedText() ? countdown->associatedText()->id : QString()}});
+                {"textId", countdown->associatedText() ? countdown->associatedText()->id : QString()},{"format",countdown->outputFormat()},
+                {"totalTextId",countdown->totalText()?countdown->totalText()->id:QString()}});
         }
     QSaveFile file(path);if(!file.open(QIODevice::WriteOnly))return false;
     auto bytes=QJsonDocument(QJsonObject{{"format","sessions"},{"version",1},{"items",items},{"widgets",widgets}}).toJson();
@@ -474,9 +592,14 @@ bool MainWindow::readProject(const QString &path){
             auto widget = value.toObject();
             if ((widget["type"] != "countdown" && widget["type"] != "multimedia") || !widget["name"].isString() || widget["name"].toString().trimmed().isEmpty()) return false;
             if(widget["type"]=="multimedia" && !widget["file"].isString())return false;
+            if(widget.contains("loop") && !widget["loop"].isBool())return false;
+            for(auto key:{"purge","next","mix"})if(widget.contains(key) && !widget[key].isBool())return false;
+            if(widget.contains("totalTextId") && !widget["totalTextId"].isString())return false;
+            if(!widget["totalTextId"].toString().isEmpty() && widget["totalTextId"]==widget["textId"])return false;
             if(widget.contains("id") && (!widget["id"].isString() || widget["id"].toString().isEmpty()))return false;
             if (widget.contains("seconds") && (!widget["seconds"].isDouble() || widget["seconds"].toDouble() != widget["seconds"].toInt() || widget["seconds"].toInt() < 1 || widget["seconds"].toInt() > 86400)) return false;
             if (widget.contains("textId") && !widget["textId"].isString()) return false;
+            if(widget.contains("format") && (!widget["format"].isString() || !Countdown::outputFormats().contains(widget["format"].toString().toUpper())))return false;
             if (widget.contains("panel") && (!widget["panel"].isDouble() || widget["panel"].toDouble() != widget["panel"].toInt() || widget["panel"].toInt() < 0 || widget["panel"].toInt() > 2)) return false;
             countdownData.append(widget);
         }
@@ -487,13 +610,15 @@ bool MainWindow::readProject(const QString &path){
     for(auto value:root["items"].toArray()){
         auto o=value.toObject();
         for(auto key:{"x","y","w","h","z"})if(!o[key].isDouble() || !std::isfinite(o[key].toDouble()) || std::abs(o[key].toDouble())>16000)return fail();
-        if(o["w"].toDouble()<24 || o["h"].toDouble()<24)return fail();
+        const double minimum=o["type"]=="line"?1:24;
+        if(o["w"].toDouble()<minimum || o["h"].toDouble()<minimum)return fail();
         CanvasItem *item=nullptr;
         if(o["type"]=="image"){QImage image;image.loadFromData(QByteArray::fromBase64(o["data"].toString().toLatin1()),"PNG");if(image.isNull())return fail();item=new CanvasItem(image);}
         else if(o["type"]=="text")item=new CanvasItem(o["text"].toString());
         else if(o["type"]=="circle")item=new CanvasItem(CanvasItem::Shape::Circle);
         else if(o["type"]=="square")item=new CanvasItem(CanvasItem::Shape::Square);
         else if(o["type"]=="rectangle")item=new CanvasItem(CanvasItem::Shape::Rectangle);
+        else if(o["type"]=="line")item=new CanvasItem(CanvasItem::Shape::Line);
         else return fail();
         pending.append(item);item->setPos(o["x"].toDouble(),o["y"].toDouble());item->setItemSize({o["w"].toDouble(),o["h"].toDouble()});item->setZValue(o["z"].toDouble());
         if(o.contains("mediaId") && !o["mediaId"].isString())return fail();
@@ -514,11 +639,13 @@ bool MainWindow::readProject(const QString &path){
         QColor c(o["color"].toString());if(c.isValid())item->color=c;
     }
     for (auto value : countdownData) {
-        QString textId = value.toObject()["textId"].toString();
+        for(auto key:{"textId","totalTextId"}) {
+        QString textId = value.toObject()[key].toString();
         if (textId.isEmpty()) continue;
         bool found = false;
         for (auto *item : pending) if (item->isText() && item->id == textId) found = true;
         if (!found) return fail();
+        }
     }
     for (auto *container : countdownContainers) container->clearWidgets();
     canvas->clear();for(auto *item:pending)addItem(item,item->pos());canvas->clearSelection();
@@ -526,8 +653,9 @@ bool MainWindow::readProject(const QString &path){
         auto widget = value.toObject();
         if(widget["type"]=="multimedia") {
             QString file=widget["file"].toString();if(!file.isEmpty() && QFileInfo(file).isRelative())file=QFileInfo(path).dir().absoluteFilePath(file);
-            createMultimedia(widget["name"].toString(),file,widget["id"].toString());
-        } else createCountdown(widget["name"].toString(), widget["seconds"].toInt(60), widget["textId"].toString());
+            auto *media=createMultimedia(widget["name"].toString(),file,widget["id"].toString(),widget["loop"].toBool(false));
+            media->setPurge(widget["purge"].toBool());media->setNext(widget["next"].toBool());media->setMix(widget["mix"].toBool());
+        } else createCountdown(widget["name"].toString(), widget["seconds"].toInt(60), widget["textId"].toString(),true,widget["format"].toString("MM:SS.C"),widget["totalTextId"].toString());
     }
     filename=path;dirty=false;setWindowModified(false);setWindowTitle("Sessions — "+QFileInfo(path).fileName()+"[*]");refresh();return true;
 }

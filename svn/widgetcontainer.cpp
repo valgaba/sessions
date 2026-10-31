@@ -210,9 +210,9 @@ bool WidgetContainer::copyAction(bool cut) {
     if (!allowCountdown || !selected) return false;
     if(auto *timer=qobject_cast<Countdown *>(selected.data()))
         actionClipboard = QJsonObject{{"version",1},{"type","countdown"},{"name",timer->name()},{"seconds",timer->durationSeconds()},
-            {"textId",timer->associatedText()?timer->associatedText()->id:QString()},{"cut",cut}};
+            {"textId",timer->associatedText()?timer->associatedText()->id:QString()},{"format",timer->outputFormat()},{"totalTextId",timer->totalText()?timer->totalText()->id:QString()},{"cut",cut}};
     else if(auto *media=qobject_cast<Multimedia *>(selected.data()))
-        actionClipboard = QJsonObject{{"version",1},{"type","multimedia"},{"name",media->name()},{"file",media->filePath()},{"cut",cut}};
+        actionClipboard = QJsonObject{{"version",1},{"type","multimedia"},{"name",media->name()},{"file",media->filePath()},{"loop",media->loops()},{"purge",media->purges()},{"next",media->playsNext()},{"mix",media->mixes()},{"cut",cut}};
     else return false;
     if (cut) deleteAction();
     return true;
@@ -223,8 +223,8 @@ void WidgetContainer::pasteAction() {
     if (!clipboardAction(&root)) return;
     int index = selected ? contentsLayout->indexOf(selected)+1 : widgetCount();
     QString name = root["name"].toString() + (root["cut"].toBool() ? QString() : QString(" (copia)"));
-    if(root["type"]=="multimedia")emit pasteMultimediaRequested(name,root["file"].toString(),index);
-    else emit pasteCountdownRequested(name,root["seconds"].toInt(),root["textId"].toString(),index);
+    if(root["type"]=="multimedia")emit pasteMultimediaRequested(name,root["file"].toString(),root["loop"].toBool(false),index,root["purge"].toBool(),root["next"].toBool(),root["mix"].toBool());
+    else emit pasteCountdownRequested(name,root["seconds"].toInt(),root["textId"].toString(),index,root["format"].toString("MM:SS.C"),root["totalTextId"].toString());
 }
 void WidgetContainer::deleteAction() {
     if (!allowCountdown || !selected) return;

@@ -72,7 +72,12 @@ int smokeTest(QApplication &app) {
     check(countdown && countdown->name() == "Inicio del evento" && countdown->findChild<QLabel *>("CountdownTitle")->toolTip() == "Inicio del evento", "Countdown retains entered name and shows full title in tooltip");
     auto *timerText = w.addItem(new CanvasItem("Texto del temporizador"), {30,30});
     countdown->configure(3661, timerText);
+    check(countdown->outputFormat()=="MM:SS.C" && timerText->text=="61:01.0","Countdown defaults to minutes seconds tenths with total minutes beyond one hour");
+    countdown->setOutputFormat("HH:MM:SS.c");
     check(timerText->text == "01:01:01.0", "configuration immediately displays hours minutes seconds and tenths");
+    countdown->setOutputFormat("SS.C");check(timerText->text=="3661.0","seconds-only format preserves the complete configured duration");
+    check(!countdown->setOutputFormat("invalid") && countdown->outputFormat()=="SS.C","Countdown rejects an unsupported output format");
+    countdown->setOutputFormat("HH:MM:SS.C");
     countdown->configure(3, timerText);
     auto *play = countdown->findChild<QPushButton *>("countdownStart");
     auto *pause = countdown->findChild<QPushButton *>("countdownPause");
@@ -154,7 +159,7 @@ int smokeTest(QApplication &app) {
                     dialog->accept();
                 }
             });
-            QTest::mouseClick(menu,Qt::LeftButton,Qt::NoModifier,menu->actionGeometry(menu->actions().first()).center());
+            if(auto *addText=menu->findChild<QAction *>("addText"))QTest::mouseClick(menu,Qt::LeftButton,Qt::NoModifier,menu->actionGeometry(addText).center());else menu->close();
         }
     });
     QContextMenuEvent context(QContextMenuEvent::Mouse,insertion,w.view->viewport()->mapToGlobal(insertion));
@@ -222,6 +227,7 @@ int smokeTest(QApplication &app) {
     auto *savedCountdown = restored.findChild<Countdown *>("Countdown");
     check(savedCountdown && savedCountdown->name() == "Inicio del evento", "Countdown name survives project round trip");
     check(savedCountdown && savedCountdown->durationSeconds() == 2 && savedCountdown->associatedText() && savedCountdown->associatedText()->id == text->id, "Countdown duration and text association survive save and reopen");
+    check(savedCountdown && savedCountdown->outputFormat()=="HH:MM:SS.C","Countdown output format survives save and reopen");
     bool namesSaved = false;
     for (auto *base : restored.canvas->items()) if (auto *item = dynamic_cast<CanvasItem *>(base); item && item->isImage()) namesSaved = item->name == "Logo del evento";
     check(namesSaved && savedCountdown->associatedText()->name == text->name, "text and image names survive save and reopen");
@@ -281,7 +287,9 @@ int smokeTest(QApplication &app) {
                         dialog->setTextValue(name); dialog->accept();
                     }
                 });
-                QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier, menu->actionGeometry(action).center());
+                auto *shapes=menu->findChild<QMenu *>("basicShapesMenu");
+                if(shapes){menu->setActiveAction(shapes->menuAction());QTest::keyClick(menu,Qt::Key_Right);QTest::mouseClick(shapes,Qt::LeftButton,Qt::NoModifier,shapes->actionGeometry(action).center());}
+                else menu->close();
             }
         });
         QPoint point = view->mapFromScene(QPointF(1200,680));
@@ -295,6 +303,10 @@ int smokeTest(QApplication &app) {
     auto *square = insertShape("addSquare", "Cuadrado de prueba");
     if (square) square->setPos(350,470);
     auto *rectangle = insertShape("addRectangle", "Rectángulo de prueba");
+    if(rectangle)rectangle->setPos(650,500);
+    auto *line=insertShape("addLine","Línea de prueba");
+    check(line && line->shapeType()==CanvasItem::Shape::Line && line->itemSize()==QSizeF(320,1),"basic shapes submenu creates a named horizontal line");
+    if(line){line->setPos(100,400);line->setItemSize({400,1});line->setSelected(false);check(line->shape().contains(QPointF(200,0)) && !line->shape().contains(QPointF(200,20)),"line hit testing follows its stroke rather than a rectangular fill");}
     check(circle && square && rectangle, "right click inserts named circle square and rectangle");
     if (!circle || !square || !rectangle) return 1;
     circle->setPos(80,450); circle->setSelected(true);
@@ -303,6 +315,7 @@ int smokeTest(QApplication &app) {
     drag(start,start+QPoint(10,15));
     check(circle->itemSize().width() == circle->itemSize().height() && QLineF(cornerBefore,circle->mapToScene(circle->selectionRect().topLeft())).length()<1, "circle corner resizing preserves proportions and opposite corner");
     PropertiesDialog shapeProperties(circle, &w);
+    shapeProperties.grab().save(QApplication::applicationDirPath()+"/../build/properties-shape.png");
     shapeProperties.findChild<QDoubleSpinBox *>("property3")->setValue(240);
     check(shapeProperties.findChild<QDoubleSpinBox *>("property2")->value() == 240 && shapeProperties.findChild<QPushButton *>("shapeColor") && !shapeProperties.findChild<QPlainTextEdit *>("propertyText"), "shape properties offers fill and keeps circle dimensions equal");
     shapeProperties.accept();
@@ -324,7 +337,7 @@ int smokeTest(QApplication &app) {
     bool loadedShapes = shapeRestored.readProject(temp.filePath("shapes.sessions"));
     int shapeCount = 0;
     for (auto *base : shapeRestored.canvas->items()) if (auto *item = dynamic_cast<CanvasItem *>(base); item && item->isShape()) ++shapeCount;
-    check(loadedShapes && shapeCount == 3, "reopen all three basic shape types");
+    check(loadedShapes && shapeCount == 4, "reopen all four basic shape types including a one-pixel high line");
     auto *restoredPanels = shapeRestored.findChild<QSplitter *>("bottomSplitter");
     check(restoredPanels->widget(0)->findChild<Countdown *>() && !restoredPanels->widget(1)->findChild<Countdown *>() && !restoredPanels->widget(2)->findChild<Countdown *>(), "reopened Countdowns stay in left panel only");
     QFile oldProject(temp.filePath("shapes.sessions")); oldProject.open(QIODevice::ReadOnly);
@@ -363,6 +376,7 @@ int smokeTest(QApplication &app) {
     auto *copy = container->selectedCountdown();
     check(copy && copy != countdown && copy->durationSeconds() == countdown->durationSeconds() && copy->associatedText() == text && copy->state() == Countdown::State::Stopped && text->text == currentTime, "paste preserves configuration without resetting source countdown text");
     if (!copy || copy == countdown) return 1;
+    check(copy->outputFormat()==countdown->outputFormat(),"copied Countdown retains its output format");
     check(countdownMenuAction(copy,"moveActionUp") && container->widgetsInOrder().first() == copy && countdown->state() == Countdown::State::Paused, "moving Countdown up preserves timer state");
     check(w.writeProject(temp.filePath("ordered.sessions")), "save reordered Countdown list");
     MainWindow ordered;
@@ -387,9 +401,9 @@ int smokeTest(QApplication &app) {
     auto *alternative = container->selectedCountdown();
     alternative->configure(90, text, false);
     QTest::mouseClick(alternative->findChild<QLabel *>("CountdownTitle"), Qt::LeftButton);
-    check(text->text == "00:01:30.0" && alternative->state() == Countdown::State::Stopped && countdown->state() == Countdown::State::Paused, "selecting Countdown publishes its time without starting or resetting it");
+    check(text->text == "01:30.0" && alternative->state() == Countdown::State::Stopped && countdown->state() == Countdown::State::Paused, "selecting Countdown publishes its time without starting or resetting it");
     QTest::qWait(550);
-    check(text->text == "00:01:30.0" && !text->timerHidden(), "previous paused Countdown cannot overwrite the selected Countdown text");
+    check(text->text == "01:30.0" && !text->timerHidden(), "previous paused Countdown cannot overwrite the selected Countdown text");
     QTest::mouseClick(countdown->findChild<QLabel *>("CountdownTitle"), Qt::LeftButton);
     check(text->text == currentTime && countdown->state() == Countdown::State::Paused, "selecting paused Countdown restores its frozen time");
     container->selectCountdown(alternative); container->deleteCountdown();
@@ -429,9 +443,15 @@ int smokeTest(QApplication &app) {
     QTest::mouseRelease(w.view->viewport(),Qt::LeftButton,Qt::NoModifier,corner+QPoint(25,25));
     check(managed->itemSize()==originalRect && managed->pos()==originalPosition,"locked source cannot be resized or moved with mouse");
     sourceList->setCurrentItem(rowFor(managed->id));
+    bool sourceMenuOrder=false,sourceShapeSubmenu=false;
     auto sourceMenuAction = [&](const QString &name) {
         QTimer::singleShot(0,[&] {
             if(auto *menu=qobject_cast<QMenu *>(app.activePopupWidget())) {
+                const auto entries=menu->actions();auto *lock=menu->findChild<QAction *>("sourceLock");auto *remove=menu->findChild<QAction *>("sourceDelete");auto *properties=menu->findChild<QAction *>("sourceProperties");
+                sourceMenuOrder=lock && remove && properties && entries.indexOf(remove)==entries.indexOf(lock)+1 && entries.last()==properties && entries.at(entries.size()-2)->isSeparator();
+                auto *add=sources->findChild<QMenu *>("sourceAddMenu");auto *shapes=sources->findChild<QMenu *>("sourceShapesMenu");
+                sourceShapeSubmenu=add && shapes && add->actions().size()==3 && add->actions().last()->menu()==shapes && shapes->actions().size()==4;
+                menu->grab().save(QApplication::applicationDirPath()+"/../build/sources-menu.png");
                 if(auto *action=menu->findChild<QAction *>(name);action && action->isEnabled())QTest::mouseClick(menu,Qt::LeftButton,Qt::NoModifier,menu->actionGeometry(action).center());
                 else menu->close();
             }
@@ -441,6 +461,8 @@ int smokeTest(QApplication &app) {
         QApplication::sendEvent(sourceList->viewport(),&event);
     };
     sourceMenuAction("sourceDown");
+    check(sourceMenuOrder,"Sources menu places Delete immediately below Lock and Properties last after a separator");
+    check(sourceShapeSubmenu,"Sources Add menu groups circle square rectangle and line in Basic shapes");
     check(sourceList->indexOfTopLevelItem(rowFor(managed->id))==1,"down control moves source down one layer");
     sourceMenuAction("sourceUp");
     check(sourceList->indexOfTopLevelItem(rowFor(managed->id))==0,"up control moves source up one layer");
@@ -483,6 +505,16 @@ int smokeTest(QApplication &app) {
     } }
     auto waitFor=[&](auto condition,int timeout=5000){QElapsedTimer deadline;deadline.start();while(!condition() && deadline.elapsed()<timeout)QTest::qWait(50);return condition();};
     media->configure("Audio",audioFile);
+    auto *loopButton=media->findChild<QPushButton *>("multimediaLoop");
+    app.processEvents();
+    check(loopButton && loopButton->isCheckable() && loopButton->isEnabled() && !loopButton->isChecked() && !loopButton->icon().isNull() && loopButton->text().isEmpty(),"Multimedia offers a Radit style icon Loop toggle, off by default");
+    check(loopButton && loopButton->isVisible() && loopButton->toolTip().startsWith("Loop") && loopButton->mapTo(media,QPoint(0,0)).x()+loopButton->width()<=media->width(),"Loop toggle is labelled by its tooltip and fits inside the action card");
+    auto swatch=[&](QPushButton *button){const QImage image=button->grab().toImage();return image.pixelColor(qRound(3.0*image.width()/button->width()),qRound(3.0*image.height()/button->height()));};
+    const QColor loopIdle=swatch(loopButton);
+    QTest::mouseClick(loopButton,Qt::LeftButton);
+    check(media->loops() && loopButton->isChecked() && swatch(loopButton)==QColor("#39385b") && loopIdle==QColor("#262c3b"),"Loop toggle keeps Radit's checked palette when enabled");
+    QTest::mouseClick(loopButton,Qt::LeftButton);
+    check(!media->loops() && !loopButton->isChecked(),"Loop toggle returns to its normal palette when disabled");
     QTest::mouseClick(media->findChild<QPushButton *>("multimediaPlay"),Qt::LeftButton);
     check(waitFor([&]{return media->isPlaying() && media->position()>150 && media->duration()>4000;}),"Multimedia plays audio and reports position and duration");
     QTest::mouseClick(media->findChild<QPushButton *>("multimediaPause"),Qt::LeftButton);
@@ -502,6 +534,10 @@ int smokeTest(QApplication &app) {
     check(loadedDuration>0 && media->duration()==loadedDuration,"media duration survives decoder stopping and discarding timing metadata");
     media->configure("Vídeo de prueba",videoFile);
     countdown->stop();
+    check(waitFor([&]{return !media->thumbnail().isNull();}),"video first-frame thumbnail is prepared without Cue or Play");
+    auto *thumbnailButton=media->findChild<QPushButton *>("multimediaPlay");
+    check(thumbnailButton && thumbnailButton->text().isEmpty() && !thumbnailButton->icon().isNull() && !media->isPlaying() && !media->hasCurrentFrame() && media->position()==0,"thumbnail replaces the Play button and leaves playback and output untouched");
+    media->grab().save(QApplication::applicationDirPath()+"/../build/multimedia-thumbnail.png");
     QImage beforeCue(1280,720,QImage::Format_RGB32);beforeCue.fill(Qt::black);
     {QPainter painter(&beforeCue);w.outputScene->render(&painter);}
     QTest::mouseClick(media->findChild<QPushButton *>("multimediaCue"),Qt::LeftButton);
@@ -563,7 +599,20 @@ int smokeTest(QApplication &app) {
     check(relaunchedVideo && media->position()==media->duration() && media->currentFrame()==preparedFrame,"Lanzar preserves the finished video without restarting it");
     QTest::mouseClick(media->findChild<QPushButton *>("multimediaPlay"),Qt::LeftButton);
     check(waitFor([&]{return media->isPlaying() && media->position()<1500;}),"finished video restarts only when Play is pressed explicitly");
+    QTest::mouseClick(loopButton,Qt::LeftButton);
+    check(media->loops() && loopButton->isChecked(),"Loop toggle activates repeat for the configured video");
+    media->seek(media->duration()-250);
+    check(waitFor([&]{return media->isPlaying() && media->position()<media->duration()/2 && media->findChild<QLabel *>("MultimediaStatus")->text()!="Finalizado";},4000),"looping video restarts at the beginning instead of finishing");
+    check(waitFor([&]{return videoInOutput() && mediaSlider->value()<mediaSlider->maximum() && media->position()>0 && media->position()<media->duration()/2;}),"loop restart keeps the action in output and rewinds the slider");
+    media->seek(media->duration()-250);
+    check(waitFor([&]{return media->isPlaying() && media->position()<media->duration()/2;},6000),"loop keeps repeating while it stays enabled");
+    QTest::mouseClick(loopButton,Qt::LeftButton);
+    check(!media->loops() && !loopButton->isChecked(),"Loop toggle can be disabled during playback");
+    media->seek(media->duration()-250);
+    check(waitFor([&]{return media->findChild<QLabel *>("MultimediaStatus")->text()=="Finalizado";},5000),"disabling Loop restores the finished state at end of file");
+    media->play();waitFor([&]{return media->isPlaying();});
     media->pause();waitFor([&]{return media->isPaused();});
+    media->setLoop(true);
     check(w.writeProject(temp.filePath("multimedia.sessions")),"save design with mixed Countdown and Multimedia actions");
     MainWindow mediaRestored;bool loadedMedia=mediaRestored.readProject(temp.filePath("multimedia.sessions"));
     auto *restoredMedia=mediaRestored.findChild<Multimedia *>();
@@ -572,6 +621,13 @@ int smokeTest(QApplication &app) {
     bool bindingRestored=false;
     if(restoredMedia)for(auto *base:mediaRestored.canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==restoredMedia->id)bindingRestored=true;
     check(bindingRestored,"saved video source retains its Multimedia binding");
+    check(restoredMedia && restoredMedia->loops() && restoredMedia->findChild<QPushButton *>("multimediaLoop")->isChecked(),"Loop mode survives saving and reopening the design");
+    { QJsonObject root{{"format","sessions"},{"version",1},{"items",QJsonArray()},
+        {"widgets",QJsonArray{QJsonObject{{"type","multimedia"},{"name","Bucle no válido"},{"file",videoFile},{"loop","sí"}}}}};
+      QFile invalidLoop(temp.filePath("invalid-loop.sessions"));invalidLoop.open(QIODevice::WriteOnly);invalidLoop.write(QJsonDocument(root).toJson());invalidLoop.close(); }
+    MainWindow invalidLoopWindow;
+    check(!invalidLoopWindow.readProject(temp.filePath("invalid-loop.sessions")) && invalidLoopWindow.findChild<Multimedia *>()==nullptr,"a design with a non boolean Loop value is rejected");
+    media->setLoop(false);
     media->cue();
     check(waitFor([&]{return media->isPlaying() && media->position()>100 && videoSource->isVisible();}),"Cue restores hidden video when explicitly requested");
     QTest::mouseClick(media->findChild<QPushButton *>("multimediaStop"),Qt::LeftButton);
@@ -638,9 +694,11 @@ int smokeTest(QApplication &app) {
     check(container->selectedAction()==droppedAudio && droppedAudio->property("selected").toBool(),"right click selects Multimedia and background retains the selected action");
     droppedAudio->play();waitFor([&]{return droppedAudio->isPlaying() && droppedAudio->position()>100;});droppedAudio->pause();waitFor([&]{return droppedAudio->isPaused();});
     const qint64 originalMediaPosition=droppedAudio->position();
+    droppedAudio->setLoop(true);
     check(actionMenu(droppedAudio,"copyAction") && actionMenu(nullptr,"pasteAction"),"common menu copies Multimedia and pastes from Actions background");
     auto *mediaCopy=qobject_cast<Multimedia *>(container->selectedAction());
-    check(mediaCopy && mediaCopy!=droppedAudio && mediaCopy->id!=droppedAudio->id && mediaCopy->filePath()==droppedAudio->filePath() && !mediaCopy->isPlaying() && droppedAudio->isPaused() && droppedAudio->position()==originalMediaPosition,"pasted Multimedia gets independent identity without disturbing source playback");
+    check(mediaCopy && mediaCopy!=droppedAudio && mediaCopy->id!=droppedAudio->id && mediaCopy->filePath()==droppedAudio->filePath() && mediaCopy->loops() && !mediaCopy->isPlaying() && droppedAudio->isPaused() && droppedAudio->position()==originalMediaPosition,"pasted Multimedia gets independent identity and Loop mode without disturbing source playback");
+    droppedAudio->setLoop(false);
     if(!mediaCopy)return 1;
     bool mediaPropertiesOpened=false;
     QTimer propertiesCloser;propertiesCloser.setInterval(30);
@@ -751,8 +809,241 @@ int smokeTest(QApplication &app) {
         if(auto *action=transition.findChild<QAction *>("fadeOptions"))action->trigger();
         check(fadeDialogOpened && transition.fadeDuration()==0,"Options offers fade duration in seconds and Cancel preserves its previous value");
     }
+    auto *zoomSelector=w.findChild<QSlider *>("compositionZoom");
+    auto *zoomLabel=w.findChild<QLabel *>("compositionZoomLevel");
+    auto *zoomBar=w.findChild<QWidget *>("CompositionZoomBar");
+    check(!w.findChild<QStatusBar *>() && zoomBar && zoomBar->parentWidget()==w.view->parentWidget(),"zoom controls belong to composition footer and the global bottom status bar is removed");
+    auto sendZoomWheel=[&](int delta,Qt::KeyboardModifiers modifiers){
+        const QPoint point=w.view->viewport()->rect().center();QTest::mouseMove(w.view->viewport(),point);
+        QWheelEvent wheel(QPointF(point),QPointF(w.view->viewport()->mapToGlobal(point)),QPoint(),QPoint(0,delta),Qt::NoButton,modifiers,Qt::NoScrollPhase,false);
+        QApplication::sendEvent(w.view->viewport(),&wheel);
+    };
+    w.view->setZoom(8);check(qAbs(w.view->transform().m11()-8)<0.00001 && zoomSelector && zoomLabel && zoomLabel->text()=="800 %","composition supports zoom beyond the previous 500 percent limit and displays its level");
+    w.view->setZoom(32);sendZoomWheel(120,Qt::ControlModifier);
+    check(qAbs(w.view->transform().m11()-32)<0.00001,"composition zoom clamps precisely at 3200 percent");
+    auto *precise=w.addItem(new CanvasItem(CanvasItem::Shape::Rectangle),{100,100});precise->setItemSize({60,60});
+    w.view->centerOn(precise->mapToScene(precise->selectionRect().bottomRight()));app.processEvents();
+    const QPoint fineCorner=w.view->mapFromScene(precise->mapToScene(precise->selectionRect().bottomRight()));
+    drag(fineCorner,fineCorner+QPoint(4,4));
+    check(precise->itemSize().width()>60 && precise->itemSize().width()<61 && qAbs(precise->x()-100)<.01 && qAbs(precise->y()-100)<.01,"3200 percent zoom allows subpixel object resizing while preserving the opposite corner");
+    delete precise;
+    w.view->setZoom(.05);sendZoomWheel(-120,Qt::ControlModifier);
+    check(qAbs(w.view->transform().m11()-.05)<0.00001,"composition zoom clamps precisely at 5 percent");
+    w.view->setZoom(1);sendZoomWheel(120,Qt::ControlModifier|Qt::ShiftModifier);
+    check(qAbs(w.view->transform().m11()-1.02)<0.00001,"Ctrl Shift wheel offers fine two-percent zoom steps");
+    sendZoomWheel(0,Qt::ControlModifier);check(qAbs(w.view->transform().m11()-1.02)<0.00001,"empty wheel movement does not change zoom");
+    w.view->setZoom(4);w.resize(w.width()+50,w.height()+40);app.processEvents();
+    check(qAbs(w.view->transform().m11()-4)<0.00001,"manual zoom survives resizing the window");
+    if(zoomSelector)zoomSelector->setValue(1000);
+    check(qAbs(w.view->transform().m11()-32)<0.00001,"composition zoom slider reaches 3200 percent");
+    if(zoomSelector)zoomSelector->setValue(500);
+    const qreal midpoint=.05*std::sqrt(640.0);
+    check(qAbs(w.view->transform().m11()-midpoint)<0.00001,"composition zoom slider provides a useful logarithmic range");
+    if(auto *more=w.findChild<QToolButton *>("compositionZoomIn"))QTest::mouseClick(more,Qt::LeftButton);
+    check(qAbs(w.view->transform().m11()-midpoint*1.15)<0.00001,"magnifying glass zoom-in button changes composition zoom");
+    if(auto *less=w.findChild<QToolButton *>("compositionZoomOut"))QTest::mouseClick(less,Qt::LeftButton);
+    check(qAbs(w.view->transform().m11()-midpoint)<0.00001,"magnifying glass zoom-out button changes composition zoom");
+    w.view->fitCanvas();const qreal fitBefore=w.view->transform().m11();w.resize(w.width()+100,w.height()+100);app.processEvents();
+    check(w.view->isCanvasFitted() && w.view->transform().m11()!=fitBefore && zoomSelector,"fit mode continues adapting to available space after using the zoom slider");
+    {
+        MainWindow editor;editor.setFadeDuration(0);editor.show();editor.activateWindow();app.processEvents();editor.view->fitCanvas();
+        auto *panel=editor.findChild<SourcePanel *>("SourcesPanel");auto *rows=panel->findChild<QTreeWidget *>("sourcesList");
+        auto selectSource=[&](CanvasItem *item){panel->synchronize();for(int i=0;i<rows->topLevelItemCount();++i)if(rows->topLevelItem(i)->data(0,Qt::UserRole).toString()==item->id){rows->setCurrentItem(rows->topLevelItem(i));rows->scrollToItem(rows->topLevelItem(i));app.processEvents();break;}};
+        auto clipboardMenu=[&](bool fromSources,const QString &actionName,QPointF scenePoint=QPointF(1100,650)) {
+            bool invoked=false;
+            QTimer::singleShot(0,[&]{if(auto *menu=qobject_cast<QMenu *>(app.activePopupWidget())){
+                if(auto *action=menu->findChild<QAction *>(actionName);action && action->isEnabled()){invoked=true;QTest::mouseClick(menu,Qt::LeftButton,Qt::NoModifier,menu->actionGeometry(action).center());}else menu->close();
+            }});
+            QWidget *surface=fromSources?rows->viewport():editor.view->viewport();
+            QPoint point=fromSources?(rows->currentItem()?rows->visualItemRect(rows->currentItem()).center():QPoint(5,5)):editor.view->mapFromScene(scenePoint);
+            QContextMenuEvent context(QContextMenuEvent::Mouse,point,surface->mapToGlobal(point));QApplication::sendEvent(surface,&context);return invoked;
+        };
+        check(!clipboardMenu(true,"itemPaste") && !clipboardMenu(false,"itemPaste"),"Sources and composition disable Paste when the element clipboard is empty");
+        auto *original=editor.addItem(new CanvasItem("Texto copiado"),{80,100});original->name="Etiqueta";original->color=QColor("#d5ad5d");original->setTextFont(QFont("Arial",27,QFont::Bold));original->setItemSize({240,90});selectSource(original);
+        check(clipboardMenu(true,"itemCopy") && clipboardMenu(false,"itemPaste",{800,500}),"copy from Sources pastes through the composition context menu");
+        CanvasItem *duplicate=nullptr;for(auto *base:editor.canvas->selectedItems())duplicate=dynamic_cast<CanvasItem *>(base);
+        check(duplicate && duplicate!=original && duplicate->id!=original->id && duplicate->text==original->text && duplicate->font==original->font && duplicate->color==original->color && duplicate->itemSize()==original->itemSize(),"pasted text preserves appearance and has an independent identifier");
+        if(!duplicate)return 1;
+        const QPointF pastePoint=editor.view->mapToScene(editor.view->mapFromScene(QPointF(800,500)));
+        check(QLineF(duplicate->mapToScene(duplicate->selectionRect().topLeft()),pastePoint).length()<.01,"composition context Paste places the copied item at the pointer");
+        const QString duplicateId=duplicate->id;QPointer<CanvasItem> removed=duplicate;const QPointF duplicateCenter=duplicate->mapToScene(duplicate->selectionRect().center());
+        check(clipboardMenu(false,"itemCut",duplicateCenter) && !removed && clipboardMenu(true,"itemPaste"),"cut from composition removes the item and pastes through Sources");
+        CanvasItem *moved=nullptr;for(auto *base:editor.canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->id==duplicateId)moved=item;
+        check(moved && moved->text==original->text && editor.canvas->items().size()==2,"first paste after Cut preserves the moved element identity");
+        QImage pixels(80,40,QImage::Format_RGB32);pixels.fill(QColor("#a76b8f"));
+        auto *photo=editor.addItem(new CanvasItem(pixels),{50,300});photo->name="Foto";photo->setZValue(2);
+        auto *stroke=editor.addItem(new CanvasItem(CanvasItem::Shape::Line),{300,300});stroke->name="Trazo";stroke->setItemSize({350,1});stroke->color=Qt::red;stroke->setZValue(3);
+        editor.canvas->clearSelection();photo->setSelected(true);stroke->setSelected(true);
+        check(clipboardMenu(false,"itemCopy",photo->mapToScene(photo->selectionRect().center())) && clipboardMenu(true,"itemPaste"),"composition copies multiple selected elements and Sources pastes the group");
+        CanvasItem *photoCopy=nullptr,*strokeCopy=nullptr;
+        for(auto *base:editor.canvas->selectedItems())if(auto *item=dynamic_cast<CanvasItem *>(base)){if(item->isImage())photoCopy=item;else if(item->shapeType()==CanvasItem::Shape::Line)strokeCopy=item;}
+        check(photoCopy && strokeCopy && photoCopy->image==pixels && photoCopy->id!=photo->id && strokeCopy->id!=stroke->id && strokeCopy->itemSize()==stroke->itemSize() && strokeCopy->color==stroke->color && strokeCopy->pos()-photoCopy->pos()==stroke->pos()-photo->pos() && strokeCopy->zValue()>photoCopy->zValue(),"group paste preserves embedded image line geometry relative positions and layer order");
+        stroke->setVisible(false);stroke->setLocked(true);selectSource(stroke);
+        QSet<QString> previousIds;for(auto *base:editor.canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base))previousIds.insert(item->id);
+        check(clipboardMenu(true,"itemCopy") && clipboardMenu(true,"itemPaste"),"Sources can copy and paste a hidden locked source");
+        CanvasItem *hiddenCopy=nullptr;for(auto *base:editor.canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && !previousIds.contains(item->id))hiddenCopy=item;
+        check(hiddenCopy && hiddenCopy->isLocked() && !hiddenCopy->isVisible(),"pasting preserves source visibility and lock settings");
+        auto *timer=new Countdown;timer->setName("Temporizador vinculado");timer->setCompositionScene(editor.canvas);timer->setOutputFormat("HH:MM:SS.C",false);timer->configure(12,original);
+        for(auto *container:editor.findChildren<WidgetContainer *>())if(container->countdownCreationEnabled()){container->addWidget(timer);break;}
+        timer->start();QTest::qWait(100);timer->pause();const QString originalId=original->id;QPointer<CanvasItem> cutOriginal=original;selectSource(original);
+        check(clipboardMenu(true,"itemCut") && !cutOriginal && !timer->associatedText() && timer->state()==Countdown::State::Stopped,"cutting an associated text stops Countdown and leaves no dangling association");
+        check(clipboardMenu(false,"itemPaste",{400,150}) && timer->associatedText() && timer->associatedText()->id==originalId && timer->state()==Countdown::State::Stopped && timer->outputFormat()=="HH:MM:SS.C","pasting a cut text restores its Countdown association without starting it");
+        auto *restoredText=timer->associatedText();if(!restoredText)return 1;
+        editor.canvas->clearSelection();restoredText->setSelected(true);editor.view->setFocus();app.processEvents();const int beforeKeys=editor.canvas->items().size();
+        QTest::keyClick(editor.view->viewport(),Qt::Key_C,Qt::ControlModifier);QTest::keyClick(editor.view->viewport(),Qt::Key_V,Qt::ControlModifier);
+        check(editor.canvas->items().size()==beforeKeys+1 && timer->associatedText()==restoredText,"composition Ctrl C and Ctrl V duplicate text without copying its Countdown ownership");
+        selectSource(restoredText);rows->setFocus();app.processEvents();QTest::keyClick(rows,Qt::Key_C,Qt::ControlModifier);QTest::keyClick(rows,Qt::Key_V,Qt::ControlModifier);
+        check(editor.canvas->items().size()==beforeKeys+2,"Sources Ctrl C and Ctrl V use the shared element clipboard");
+        const QString copiedProject=temp.filePath("copied-elements.sessions");MainWindow reload;
+        check(editor.writeProject(copiedProject) && reload.readProject(copiedProject) && reload.canvas->items().size()==editor.canvas->items().size(),"copied images shapes texts and restored Countdown binding survive project reopening");
+    }
+    {
+        MainWindow defaults;defaults.show();app.processEvents();
+        auto addWithDefault=[&](MainWindow &window,const QString &label)->QString {
+            QString proposed;
+            QTimer::singleShot(0,[&]{
+                if(auto *dialog=qobject_cast<QInputDialog *>(app.activeModalWidget())){proposed=dialog->textValue();dialog->accept();}
+                else if(auto *dialog=qobject_cast<QDialog *>(app.activeModalWidget());dialog && dialog->objectName()=="AddTextDialog") {
+                    auto *name=dialog->findChild<QLineEdit *>("elementName");proposed=name->text();
+                    auto *buttons=dialog->findChild<QDialogButtonBox *>();bool enabled=false;
+                    for(auto *button:buttons->buttons())if(buttons->buttonRole(button)==QDialogButtonBox::AcceptRole)enabled=button->isEnabled();
+                    check(enabled,"default text name enables adding without typing a custom name");dialog->accept();
+                }
+            });
+            for(auto *action:window.findChildren<QAction *>())if(action->text()==label){action->trigger();break;}
+            return proposed;
+        };
+        check(addWithDefault(defaults,"Añadir texto…")=="texto1" && addWithDefault(defaults,"Añadir texto…")=="texto2","new texts receive consecutive editable default names");
+        auto *existing=defaults.addItem(new CanvasItem("Texto existente"),{350,100});existing->name="TEXTO3";
+        check(addWithDefault(defaults,"Añadir texto…")=="texto4","default names avoid existing names regardless of letter case");
+        check(addWithDefault(defaults,"Añadir rectángulo…")=="rectángulo1" && addWithDefault(defaults,"Añadir rectángulo…")=="rectángulo2","basic shapes receive numbered default names in their existing name dialog");
+        const QString defaultsFile=temp.filePath("default-names.sessions");MainWindow reloadedNames;
+        check(defaults.writeProject(defaultsFile) && reloadedNames.readProject(defaultsFile) && addWithDefault(reloadedNames,"Añadir texto…")=="texto5","numbered names remain unique after reopening a saved composition");
+    }
+    auto renameCountdown=[&](Countdown *timer,const QString &next,bool accept,bool *allowed=nullptr){
+        QTimer::singleShot(0,[&]{if(auto *dialog=qobject_cast<QDialog *>(app.activeModalWidget());dialog && dialog->objectName()=="CountdownProperties"){
+            auto *edit=dialog->findChild<QLineEdit *>("countdownName");
+            if(!edit){dialog->reject();return;}
+            edit->setText(next);bool enabled=false;
+            for(auto *button:dialog->findChild<QDialogButtonBox *>()->buttons())if(dialog->findChild<QDialogButtonBox *>()->buttonRole(button)==QDialogButtonBox::AcceptRole)enabled=button->isEnabled();
+            if(allowed)*allowed=enabled;
+            dialog->grab().save(QApplication::applicationDirPath()+"/../build/properties-countdown-name.png");
+            if(accept && enabled)dialog->accept();else dialog->reject();
+        }});
+        timer->showProperties();
+    };
+    Countdown unassigned;unassigned.setName("countdown1");bool nameAllowed=false;
+    renameCountdown(&unassigned,"Cuenta sin asociación",true,&nameAllowed);
+    check(nameAllowed && unassigned.name()=="Cuenta sin asociación" && !unassigned.associatedText(),"Countdown properties can rename an action before associating a text");
+    renameCountdown(&unassigned,"   ",true,&nameAllowed);
+    check(!nameAllowed && unassigned.name()=="Cuenta sin asociación","Countdown properties reject an empty name");
+    renameCountdown(&unassigned,"Nombre descartado",false);
+    check(unassigned.name()=="Cuenta sin asociación","Cancel discards Countdown name changes");
+    countdown->start();QTest::qWait(150);countdown->pause();const auto frozenSeconds=countdown->remainingSeconds();auto *linkedText=countdown->associatedText();
+    const QString frozenText=linkedText?linkedText->text:QString();
+    renameCountdown(countdown,"  Cuenta principal  ",true);
+    check(countdown->name()=="Cuenta principal" && countdown->findChild<QLabel *>("CountdownTitle")->toolTip()=="Cuenta principal" && countdown->state()==Countdown::State::Paused && countdown->remainingSeconds()==frozenSeconds && countdown->associatedText()==linkedText && linkedText && linkedText->text==frozenText,"renaming a paused Countdown updates its title without resetting time state or association");
+    MainWindow renamedReload;const QString renamedProject=temp.filePath("renamed-countdown.sessions");
+    bool nameSaved=w.writeProject(renamedProject) && renamedReload.readProject(renamedProject);bool nameRestored=false;
+    for(auto *timer:renamedReload.findChildren<Countdown *>())if(timer->name()=="Cuenta principal")nameRestored=true;
+    check(nameSaved && nameRestored,"Countdown name edited in properties survives saving and reopening");
+    countdown->stop();
+    w.activateWindow();app.processEvents();
+    {
+        auto *total=w.addItem(new CanvasItem("Total"),{500,400});total->name="Tiempo total";
+        countdown->configure(3661,countdown->associatedText());countdown->setOutputFormat("HH:MM:SS.C");
+        QTimer::singleShot(0,[&]{if(auto *dialog=qobject_cast<QDialog *>(app.activeModalWidget())) {
+            auto *combo=dialog->findChild<QComboBox *>("countdownTotalText");
+            if(combo)combo->setCurrentIndex(combo->findText("Tiempo total"));
+            dialog->accept();
+        }});countdown->showProperties();
+        check(countdown->totalText()==total && total->text=="01:01:01.0","Countdown properties associate a separate text with the complete formatted duration");
+        countdown->start();QTest::qWait(220);countdown->pause();QTest::qWait(550);
+        check(total->text=="01:01:01.0" && !total->timerHidden() && !total->timerOverdue(),"total duration stays fixed and visible while remaining time advances or blinks");
+        countdown->stop();countdown->setOutputFormat("MM:SS");countdown->configure(125,countdown->associatedText());
+        check(total->text=="02:05","changing duration and format updates the total text immediately");
+        container->selectAction(countdown);container->copyAction();container->pasteAction();
+        auto *totalCopy=qobject_cast<Countdown *>(container->selectedAction());
+        check(totalCopy && totalCopy!=countdown && totalCopy->totalText()==total,"copied Countdown retains its total text association");
+        if(totalCopy && totalCopy!=countdown)container->deleteAction();
+        MainWindow loadedTotal;const auto saved=temp.filePath("total-text.sessions");
+        bool savedTotal=w.writeProject(saved) && loadedTotal.readProject(saved),foundTotal=false;
+        for(auto *timer:loadedTotal.findChildren<Countdown *>())if(timer->name()==countdown->name() && timer->totalText() && timer->totalText()->text=="02:05")foundTotal=true;
+        check(savedTotal && foundTotal,"total text binding and formatting survive a project roundtrip");
+        QPointer<CanvasItem> deletedTotal=total;delete total;countdown->showTime();
+        check(!deletedTotal && !countdown->totalText(),"deleting the total text safely releases its association");
+    }
+    {
+        // Use an isolated scene to verify actual mixed frames and action chaining.
+        MainWindow mixed;mixed.setFadeDuration(0);mixed.resize(1800,900);mixed.show();
+        const QString blueFile=temp.filePath("mix-blue.png"),redFile=temp.filePath("mix-red.png");
+        QImage color(320,180,QImage::Format_RGB32);color.fill(Qt::blue);color.save(blueFile);color.fill(Qt::red);color.save(redFile);
+        QJsonArray actions;
+        for(const auto &file:{blueFile,redFile,videoFile,audioFile})actions.append(QJsonObject{{"type","multimedia"},{"name",QFileInfo(file).baseName()},{"file",file}});
+        const auto project=temp.filePath("mix-fixture.sessions");
+        {QFile file(project);file.open(QIODevice::WriteOnly);file.write(QJsonDocument(QJsonObject{{"format","sessions"},{"version",1},{"items",QJsonArray()},{"widgets",actions}}).toJson());}
+        check(mixed.readProject(project),"load isolated Multimedia mixing fixture");
+        auto *host=mixed.findChild<QSplitter *>("bottomSplitter")->widget(0)->findChild<WidgetContainer *>();const auto ordered=host->widgetsInOrder();
+        auto *blue=qobject_cast<Multimedia *>(ordered.value(0)),*red=qobject_cast<Multimedia *>(ordered.value(1));
+        auto *clip=qobject_cast<Multimedia *>(ordered.value(2)),*audio=qobject_cast<Multimedia *>(ordered.value(3));
+        if(blue && red && clip && audio) {
+            auto renderColor=[&]{QImage frame(1280,720,QImage::Format_RGB32);frame.fill(Qt::black);QPainter p(&frame);mixed.outputScene->render(&p);p.end();return frame.pixelColor(640,360);};
+            blue->play();auto *mixToggle=red->findChild<QPushButton *>("multimediaMix");
+            QTest::mouseClick(mixToggle,Qt::LeftButton);app.processEvents();
+            check(mixToggle->isCheckable() && mixToggle->isChecked() && red->mixes() && !red->isPlaying() && renderColor().blue()>240,"Mix toggles its mode without starting playback or changing output");
+            red->play();app.processEvents();const QColor blended=renderColor();
+            check(blue->isPlaying() && red->isPlaying() && blended.red()>110 && blended.blue()>110 && blended.green()<10,"Mix keeps both images active and blends their output equally");
+            red->stop();app.processEvents();
+            check(blue->isPlaying() && renderColor().blue()>240 && renderColor().red()<10,"stopping one mixed image preserves the other at full opacity");
+            clip->setMix(true);clip->play();check(waitFor([&]{return clip->isPlaying() && clip->hasCurrentFrame();}),"Play with Mix enabled starts a video alongside an existing image");
+            audio->setMix(true);audio->play();check(waitFor([&]{return audio->isPlaying();}) && clip->isPlaying(),"Play with Mix enabled plays audio and video simultaneously");
+            audio->stop();check(clip->isPlaying(),"stopping mixed audio leaves video playing");
+            QTest::mouseClick(mixToggle,Qt::LeftButton);app.processEvents();
+            check(!red->mixes() && clip->isPlaying() && renderColor().blue()>0,"disabling Mix changes only the mode without interrupting other playback");
+            red->play();app.processEvents();check(!clip->isPlaying() && !blue->isPlaying() && renderColor().red()>240,"Play with Mix disabled replaces mixed contents with the selected object");
+            audio->cue();check(waitFor([&]{return audio->isPlaying();}) && !audio->isAudioMuted(),"audio Cue plays unmuted on the default audio device");audio->stop();
+            clip->setPurge(true);audio->setNext(true);host->selectAction(clip);host->copyAction();host->pasteAction();
+            auto *copyMedia=qobject_cast<Multimedia *>(host->selectedAction());
+            check(copyMedia && copyMedia->purges() && copyMedia->mixes(),"copying Multimedia retains Purge and Mix modes");if(copyMedia)host->deleteAction();
+            // Restore the intended order after testing the action clipboard.
+            host->moveWidget(audio,host->widgetCount());
+            const auto flagsProject=temp.filePath("media-flags.sessions");MainWindow flags;
+            bool flagsSaved=mixed.writeProject(flagsProject) && flags.readProject(flagsProject);bool purgeSaved=false,nextSaved=false,mixSaved=false;
+            for(auto *item:flags.findChildren<Multimedia *>()){if(item->filePath()==videoFile){purgeSaved=item->purges();mixSaved=item->mixes();}if(item->filePath()==audioFile)nextSaved=item->playsNext();}
+            check(flagsSaved && purgeSaved && nextSaved && mixSaved,"Purge Next and Mix modes survive saving and reopening");
+            clip->play();check(waitFor([&]{return clip->duration()>0 && clip->isPlaying();}),"start video for automatic Next and Purge");
+            QPointer<Multimedia> removedClip=clip;clip->seek(clip->duration()-600);
+            check(waitFor([&]{return !removedClip && audio->isPlaying();},6000),"completion purges the finished action and starts the next enabled Multimedia");audio->stop();
+            app.processEvents();auto *mini=red->findChild<QPushButton *>("multimediaPlay");auto *cue=red->findChild<QPushButton *>("multimediaCue");
+            check(mini->width()>=64 && cue->width()>=64 && mini->y()==cue->y() && mini->y()>red->findChild<QPushButton *>("multimediaNext")->y() && red->findChild<QLabel *>("MultimediaStatus")->isHidden(),"larger Multimedia playback controls occupy a second row below the header without a status label");
+            mixed.grab().save(QApplication::applicationDirPath()+"/../build/multimedia-header.png");
+        } else check(false,"mixing fixture contains four valid Multimedia actions");
+    }
     check(w.grab().save(QApplication::applicationDirPath()+"/../build/preview.png"),"save interface preview");
     return failures ? 1 : 0;
+}
+
+int mediaLoadTest(QApplication &app) {
+    const auto args=app.arguments();const int option=args.indexOf("--media-load-test");
+    if(option<0 || option+1>=args.size() || !QFileInfo(args[option+1]).isFile())return 2;
+    for(int i=0;i<8;++i) {
+        Multimedia media;media.configure("Prueba MOV",args[option+1]);
+        QElapsedTimer clock;clock.start();
+        while(media.thumbnail().isNull() && clock.elapsed()<7000)QTest::qWait(10);
+        std::printf("LOAD %d thumbnail=%dx%d playing=%d\n",i,media.thumbnail().width(),media.thumbnail().height(),media.isPlaying());std::fflush(stdout);
+        if(media.thumbnail().isNull() || media.isPlaying())return 1;
+        if(i<3) {
+            media.cue();clock.restart();
+            while((!media.isPlaying() || !media.hasCurrentFrame()) && clock.elapsed()<7000)QTest::qWait(10);
+            if(!media.isPlaying() || !media.hasCurrentFrame())return 1;
+            media.stop();media.play();clock.restart();
+            while((!media.isPlaying() || !media.hasCurrentFrame()) && clock.elapsed()<7000)QTest::qWait(10);
+            if(!media.isPlaying() || !media.hasCurrentFrame())return 1;
+            media.stop();
+            std::printf("TRANSPORT %d Cue/Stop/Play/Stop OK\n",i);std::fflush(stdout);
+        }
+    }
+    return 0;
 }
 
 int playbackTest(QApplication &app) {

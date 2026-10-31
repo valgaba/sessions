@@ -19,6 +19,7 @@ QIcon panelIcon(const QString &kind, bool active) {
     } else if (kind == "circle") p.drawEllipse(QRectF(3,3,14,14));
     else if (kind == "square") p.drawRect(QRectF(3,3,14,14));
     else if (kind == "rectangle") p.drawRect(QRectF(2,5,16,10));
+    else if (kind == "line") p.drawLine(3,16,17,4);
     else if (kind == "image") {
         p.drawRect(QRectF(2,3,16,14)); p.drawEllipse(QPointF(6,7),1,1);
         p.drawPolyline(QPolygonF{QPointF(3,15),QPointF(9,9),QPointF(12,12),QPointF(15,8),QPointF(18,13)});
@@ -42,10 +43,14 @@ SourcePanel::SourcePanel(QGraphicsScene *value, QWidget *parent) : QWidget(paren
     for (int column : {1,2}) { list->header()->setSectionResizeMode(column,QHeaderView::Fixed); list->setColumnWidth(column,28); }
     list->setContextMenuPolicy(Qt::CustomContextMenu); layout->addWidget(list,1);
     addMenu = new QMenu("Añadir fuente",this);addMenu->setIcon(QIcon(":/icons/Add.svg"));
-    for (auto pair : {qMakePair(QString("Texto…"),QString("text")),qMakePair(QString("Imagen…"),QString("image")),qMakePair(QString("Círculo…"),QString("circle")),qMakePair(QString("Cuadrado…"),QString("square")),qMakePair(QString("Rectángulo…"),QString("rectangle"))}) {
-        auto *action = addMenu->addAction(panelIcon(pair.second),pair.first);
+    addMenu->setObjectName("sourceAddMenu");
+    auto *shapesMenu=new QMenu("Formas básicas",addMenu);shapesMenu->setObjectName("sourceShapesMenu");shapesMenu->setIcon(QIcon(":/icons/Add.svg"));
+    for (auto pair : {qMakePair(QString("Texto…"),QString("text")),qMakePair(QString("Imagen…"),QString("image")),qMakePair(QString("Círculo…"),QString("circle")),qMakePair(QString("Cuadrado…"),QString("square")),qMakePair(QString("Rectángulo…"),QString("rectangle")),qMakePair(QString("Línea…"),QString("line"))}) {
+        auto *action = (pair.second=="text" || pair.second=="image"?addMenu:shapesMenu)->addAction(panelIcon(pair.second),pair.first);
+        action->setObjectName("sourceAdd_"+pair.second);
         connect(action,&QAction::triggered,this,[this,pair]{emit addRequested(pair.second);});
     }
+    addMenu->addMenu(shapesMenu);
     connect(list,&QTreeWidget::currentItemChanged,this,[this]{selectCurrent();});
     connect(list,&QTreeWidget::itemClicked,this,[this](QTreeWidgetItem *,int column){if(column==1)toggleVisibility();else if(column==2)toggleLock();else selectCurrent();});
     connect(list,&QTreeWidget::itemDoubleClicked,this,[this](QTreeWidgetItem *,int column){if(column==0)if(auto *item=currentItem())emit propertiesRequested(item);});
@@ -54,6 +59,10 @@ SourcePanel::SourcePanel(QGraphicsScene *value, QWidget *parent) : QWidget(paren
     connect(scene,&QGraphicsScene::selectionChanged,this,[this]{synchronize();});
     auto *removeKey = new QShortcut(QKeySequence::Delete,list); removeKey->setContext(Qt::WidgetWithChildrenShortcut);
     connect(removeKey,&QShortcut::activated,this,&SourcePanel::removeCurrent);
+    for(auto key:{QKeySequence::Copy,QKeySequence::Cut,QKeySequence::Paste}) {
+        auto *shortcut=new QShortcut(QKeySequence(key),list);shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(shortcut,&QShortcut::activated,this,[this,key]{if(key==QKeySequence::Paste)emit pasteRequested();else if(auto *item=currentItem())emit copyRequested(item,key==QKeySequence::Cut);});
+    }
     synchronize();
 }
 CanvasItem *SourcePanel::currentItem() const {
@@ -105,14 +114,17 @@ void SourcePanel::showMenu(QPoint position) {
     auto *item=currentItem();
     QMenu menu(this);
     menu.addMenu(addMenu);
+    menu.addSeparator();
+    emit clipboardMenuRequested(&menu,item);
     if (!item) { menu.exec(list->viewport()->mapToGlobal(position)); return; }
     menu.addSeparator();
     auto *visible=menu.addAction(item->isVisible()?"Ocultar":"Mostrar"); connect(visible,&QAction::triggered,this,&SourcePanel::toggleVisibility);
-    auto *lock=menu.addAction(item->isLocked()?"Desbloquear":"Bloquear");connect(lock,&QAction::triggered,this,&SourcePanel::toggleLock);
-    menu.addSeparator();auto *properties=menu.addAction(QIcon(":/icons/settings.svg"),"Propiedades…");connect(properties,&QAction::triggered,this,[this]{if(auto *source=currentItem())emit propertiesRequested(source);});
+    auto *lock=menu.addAction(item->isLocked()?"Desbloquear":"Bloquear");lock->setObjectName("sourceLock");connect(lock,&QAction::triggered,this,&SourcePanel::toggleLock);
+    auto *remove=menu.addAction(QIcon(":/icons/Remove.svg"),"Eliminar");remove->setObjectName("sourceDelete");connect(remove,&QAction::triggered,this,&SourcePanel::removeCurrent);
+    menu.addSeparator();
     int index=list->indexOfTopLevelItem(list->currentItem());
     auto *up=menu.addAction("Subir");up->setObjectName("sourceUp");up->setEnabled(index>0);connect(up,&QAction::triggered,this,[this]{moveCurrent(-1);});
     auto *down=menu.addAction("Bajar");down->setObjectName("sourceDown");down->setEnabled(index+1<list->topLevelItemCount());connect(down,&QAction::triggered,this,[this]{moveCurrent(1);});
-    menu.addSeparator();auto *remove=menu.addAction(QIcon(":/icons/Remove.svg"),"Eliminar");remove->setObjectName("sourceDelete");connect(remove,&QAction::triggered,this,&SourcePanel::removeCurrent);
+    menu.addSeparator();auto *properties=menu.addAction(QIcon(":/icons/settings.svg"),"Propiedades…");properties->setObjectName("sourceProperties");connect(properties,&QAction::triggered,this,[this]{if(auto *source=currentItem())emit propertiesRequested(source);});
     menu.exec(list->viewport()->mapToGlobal(position));
 }

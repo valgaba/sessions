@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <QEvent>
 #include <QIcon>
+#include <QLineEdit>
 
 Countdown::Countdown(QWidget *parent) : QWidget(parent) {
     setObjectName("Countdown");
@@ -62,12 +63,14 @@ Countdown::Countdown(QWidget *parent) : QWidget(parent) {
 }
 QString Countdown::name() const { return countdownName; }
 Countdown::~Countdown() {
+    if(totalTarget && totalTarget->timerOwner()==this)totalTarget->setTimerOwner(nullptr);
     if (validTarget() && target->timerOwner() == this) {
         target->setTimerOwner(nullptr); target->setTimerAppearance(false, false); emit textUpdated(target);
     }
 }
 void Countdown::setName(const QString &value) {
-    countdownName = value.trimmed(); title->setToolTip(countdownName); updateTitle();
+    const QString next=value.trimmed();if(next.isEmpty() || next==countdownName)return;
+    countdownName = next; title->setToolTip(countdownName); updateTitle();emit configurationChanged();
 }
 void Countdown::updateTitle() {
     title->setText(title->fontMetrics().elidedText(countdownName, Qt::ElideRight, title->contentsRect().width()));
@@ -88,6 +91,7 @@ void Countdown::configure(int seconds, CanvasItem *text, bool updateText) {
     remainingMs = qint64(duration) * 1000;
     lastPublished = -1;
     target = text && text->isText() && composition && text->scene() == composition ? text : nullptr;
+    if(totalTarget==target)totalTarget.clear();
     setState(State::Stopped);
     if (target) targetDestroyed = connect(target, &QObject::destroyed, this, [this] {
         timer.stop(); target = nullptr; setState(State::Stopped);
@@ -98,16 +102,42 @@ void Countdown::configure(int seconds, CanvasItem *text, bool updateText) {
     emit configurationChanged();
 }
 int Countdown::remainingSeconds() const { return int((qAbs(remainingMs) + 999) / 1000); }
+QStringList Countdown::outputFormats() { return {"MM:SS.C","HH:MM:SS.C","MM:SS","HH:MM:SS","SS.C","SS"}; }
+bool Countdown::setOutputFormat(const QString &value, bool updateText) {
+    const QString next=value.toUpper();
+    if(!outputFormats().contains(next))return false;
+    if(format==next)return true;
+    format=next;lastPublished=-1;publish(updateText);emit configurationChanged();return true;
+}
+QString Countdown::formattedTime(qint64 milliseconds) const {
+    const int tenths = int(milliseconds > 0 ? (milliseconds + 99) / 100 : -milliseconds / 100);
+    const int seconds = tenths / 10;
+    QString formatted=format;
+    const bool hours=format.contains("HH"),minutes=format.contains("MM");
+    formatted.replace("HH",QString::number(seconds/3600).rightJustified(2,'0'));
+    formatted.replace("MM",QString::number(hours?seconds/60%60:seconds/60).rightJustified(2,'0'));
+    formatted.replace("SS",QString::number(hours||minutes?seconds%60:seconds).rightJustified(2,'0'));
+    formatted.replace("C",QString::number(tenths%10));
+    return formatted;
+}
+void Countdown::setTotalText(CanvasItem *text, bool updateText) {
+    if(totalTarget && totalTarget->timerOwner()==this)totalTarget->setTimerOwner(nullptr);
+    totalTarget=text && text->isText() && composition && text->scene()==composition && text!=target ? text : nullptr;
+    if(totalTarget && updateText)totalTarget->setTimerOwner(this);
+    publish(updateText);emit configurationChanged();
+}
 void Countdown::publish(bool updateText) {
     const bool overdue = remainingMs <= 0;
     const bool hidden = currentState == State::Paused && (elapsed.elapsed() / 500) % 2;
     const int tenths = int(remainingMs > 0 ? (remainingMs + 99) / 100 : -remainingMs / 100);
-    const int seconds = tenths / 10;
-    const QString formatted = QString("%1:%2:%3.%4")
-        .arg(seconds / 3600, 2, 10, QLatin1Char('0'))
-        .arg(seconds / 60 % 60, 2, 10, QLatin1Char('0'))
-        .arg(seconds % 60, 2, 10, QLatin1Char('0'))
-        .arg(tenths % 10);
+    const QString formatted=formattedTime(remainingMs);
+    if(updateText && totalTarget && composition && totalTarget->scene()==composition && totalTarget!=target) {
+        if(lastPublished==-1)totalTarget->setTimerOwner(this);
+        const QString total=formattedTime(qint64(duration)*1000);
+        if(totalTarget->timerOwner()==this && (totalTarget->text!=total || totalTarget->timerHidden() || totalTarget->timerOverdue())) {
+            totalTarget->setText(total);totalTarget->setTimerAppearance(false,false);emit textUpdated(totalTarget);
+        }
+    }
     status->setText(QString("%1 · %2").arg(currentState == State::Playing ? "En marcha" : currentState == State::Paused ? "En pausa" : "Detenido", formatted));
     if (!updateText || !validTarget()) return;
     if (lastPublished == -1) target->setTimerOwner(this);
@@ -174,11 +204,15 @@ void Countdown::showProperties() {
     dialog.setWindowTitle("Propiedades de " + name());
     auto *layout = new QVBoxLayout(&dialog);
     auto *form = new QFormLayout;
+    auto *nameEdit=new QLineEdit(name());nameEdit->setObjectName("countdownName");nameEdit->selectAll();
+    form->addRow("Nombre:",nameEdit);
     auto *seconds = new QSpinBox;
     seconds->setObjectName("countdownSeconds");
     seconds->setRange(1, 86400);
     seconds->setSuffix(" s"); seconds->setValue(duration);
     form->addRow("Tiempo (segundos):", seconds);
+    auto *formats=new QComboBox;formats->setObjectName("countdownFormat");formats->addItems(outputFormats());formats->setCurrentText(format);
+    form->addRow("Formato de salida:",formats);
     auto *texts = new QComboBox;
     texts->setObjectName("countdownText");
     texts->addItem("Selecciona un texto…");
@@ -193,17 +227,27 @@ void Countdown::showProperties() {
         if (item == target) texts->setCurrentIndex(texts->count() - 1);
     }
     form->addRow("Texto asociado:", texts);
+    auto *totals=new QComboBox;totals->setObjectName("countdownTotalText");
+    for(int i=0;i<texts->count();++i)totals->addItem(i==0?"Sin texto de tiempo total":texts->itemText(i));
+    for(int i=1;i<choices.size();++i)if(choices[i]==totalTarget)totals->setCurrentIndex(i);
+    form->addRow("Texto de tiempo total:",totals);
     layout->addLayout(form);
     auto *buttons = new QDialogButtonBox;
     auto *accept = buttons->addButton("Aceptar", QDialogButtonBox::AcceptRole);
     buttons->addButton("Cancelar", QDialogButtonBox::RejectRole);
-    accept->setEnabled(texts->currentIndex() > 0);
-    connect(texts, qOverload<int>(&QComboBox::currentIndexChanged), accept, [accept](int index) { accept->setEnabled(index > 0); });
+    auto validate=[=]{accept->setEnabled(!nameEdit->text().trimmed().isEmpty() && (totals->currentIndex()==0 || totals->currentIndex()!=texts->currentIndex()));};
+    connect(nameEdit,&QLineEdit::textChanged,&dialog,validate);
+    connect(texts,&QComboBox::currentIndexChanged,&dialog,validate);
+    connect(totals,&QComboBox::currentIndexChanged,&dialog,validate);validate();
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
-    if (dialog.exec() == QDialog::Accepted) {
+    if (dialog.exec() == QDialog::Accepted && !nameEdit->text().trimmed().isEmpty()) {
+        setName(nameEdit->text());
         auto *item = choices.value(texts->currentIndex()).data();
-        if (item && composition && item->scene() == composition) configure(seconds->value(), item);
+        if(item && (!composition || item->scene()!=composition))item=nullptr;
+        if(seconds->value()!=duration || item!=target.data()){setOutputFormat(formats->currentText(),false);configure(seconds->value(),item);}
+        else setOutputFormat(formats->currentText());
+        setTotalText(choices.value(totals->currentIndex()).data());
     }
 }

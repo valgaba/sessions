@@ -10,6 +10,7 @@ class QPushButton;
 class QSlider;
 struct MediaPlayback;
 struct VideoFrames;
+struct ThumbnailProbe;
 
 class Multimedia : public QWidget {
     Q_OBJECT
@@ -20,6 +21,7 @@ public:
     QString filePath() const { return path; }
     QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QImage currentFrame() const { return lastFrame; }
+    QImage thumbnail() const { return thumbnailImage; }
     bool hasCurrentFrame() const { return !awaitingFreshFrame && !lastFrame.isNull(); }
     void configure(const QString &name, const QString &file);
     qint64 position() const;
@@ -27,7 +29,18 @@ public:
     bool isPlaying() const;
     bool isPaused() const;
     bool hasVideo() const;
+    bool isAudioMuted() const;
     bool isStillImage() const { return imageMode; }
+    bool loops() const { return looping; }
+    bool purges() const;
+    bool playsNext() const;
+    bool mixes() const;
+    bool isCue() const { return cueMode; }
+    bool isFinished() const { return finished; }
+    void setPurge(bool enabled);
+    void setNext(bool enabled);
+    void setMix(bool enabled);
+    void setLoop(bool enabled);
     static bool isImageFile(const QString &file);
     static bool backendAvailable();
 public slots:
@@ -50,9 +63,11 @@ protected:
 private:
     void stopPlayback(bool clearOutput);
     bool startPlayback();
+    void restartForLoop();
     void receiveFrame();
     void updatePlayback();
     void updateTime(qint64 position, qint64 duration);
+    void updateThumbnail(const QImage &image);
     QString mediaName = "Multimedia";
     QString path;
     QLabel *title;
@@ -62,13 +77,20 @@ private:
     QPushButton *cueButton;
     QPushButton *pauseButton;
     QPushButton *stopButton;
+    QPushButton *loopButton;
+    QPushButton *purgeButton;
+    QPushButton *nextButton;
+    QPushButton *mixButton;
     QSlider *slider;
     QTimer poll;
     std::unique_ptr<MediaPlayback> playback;
     std::unique_ptr<VideoFrames> frames;
+    std::unique_ptr<ThumbnailProbe> thumbnailProbe;
+    QImage thumbnailImage;
     QImage lastFrame;
     QImage firstFrame;
     bool cueMode = false;
+    bool looping = false;
     bool imageMode = false;
     bool imageActive = false;
     bool finished = false;

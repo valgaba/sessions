@@ -36,8 +36,8 @@ signals:
     void addCountdownRequested();
     void addMultimediaRequested();
     void mediaFilesDropped(QStringList files, int insertionIndex);
-    void pasteCountdownRequested(QString name, int seconds, QString textId, int insertionIndex);
-    void pasteMultimediaRequested(QString name, QString file, int insertionIndex);
+    void pasteCountdownRequested(QString name, int seconds, QString textId, int insertionIndex, QString format, QString totalTextId);
+    void pasteMultimediaRequested(QString name, QString file, bool loop, int insertionIndex, bool purge, bool next, bool mix);
     void contentsChanged();
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

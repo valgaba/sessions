@@ -1,4 +1,12 @@
 /* Selectors for Sessions-specific controls. The original radit.qss is unchanged. */
+#CompositionZoomBar { background: transparent; border: none; }
+#CompositionZoomBar QToolButton { background: transparent; border: 1px solid #535b6a; padding: 2px; }
+#CompositionZoomBar QToolButton:hover { border-color: #80a4ae; background: transparent; }
+#CompositionZoomBar QLabel { background: transparent; border: none; color: #80a4ae; }
+QSlider#compositionZoom { background: transparent; border: none; }
+QSlider#compositionZoom::groove:horizontal { border: 1px solid #686b74; height: 6px; background: transparent; border-radius: 3px; }
+QSlider#compositionZoom::sub-page:horizontal { background: #80a4ae; border-radius: 3px; }
+QSlider#compositionZoom::handle:horizontal { background: #80a4ae; width: 12px; margin: -4px 0; border: 1px solid #80a4ae; border-radius: 3px; }
 /* Same palette, square frames and control geometry as Radit's GeneralOptionsDialog. */
 QDialog#FadeOptions { background: #181e2c; border: 1px solid #333b4f; }
 #FadeOptions QLabel { background: transparent; border: none; color: #8a8d96; font-size: 12px; }
@@ -22,6 +30,11 @@ QDialog#FadeOptions { background: #181e2c; border: 1px solid #333b4f; }
 #Multimedia QPushButton, #MultimediaProperties QPushButton { background: #262c3b; color: #80a4ae; border: 1px solid #686b74; padding: 5px 10px; }
 #Multimedia QPushButton:hover { background: #30384b; border-color: #80a4ae; }
 #Multimedia QPushButton:disabled { color: #686b74; border-color: #333b4f; }
+#Multimedia QPushButton:checked { background: #39385b; border-color: #80a4ae; color: white; }
+#Multimedia QPushButton#multimediaLoop { padding: 2px; }
+#Multimedia QPushButton[thumbnail="true"] { padding: 2px; background: #181e2c; border: 1px solid #686b74; }
+#Multimedia QPushButton[thumbnail="true"]:hover { border-color: #80a4ae; background: #262c3b; }
+#Multimedia QPushButton[thumbnail="true"]:disabled { border-color: #333b4f; }
 /* Keep Radit's groove border visible, including paused/finished/disabled states. */
 QSlider#multimediaSlider { background: transparent; border: none; }
 QSlider#multimediaSlider::groove:horizontal {
@@ -87,6 +100,11 @@ QStatusBar { background: #181e2c; }
 #AddTextDialog QPushButton { background: #262c3b; color: #80a4ae; border: 1px solid #686b74; padding: 4px 10px; }
 #AddTextDialog QPushButton:disabled { color: #686b74; border-color: #333b4f; }
 #ItemPropertiesDialog QLabel { background: transparent; border: none; color: #8a8d96; }
+#ItemPropertiesDialog QLineEdit#propertyName, #CountdownProperties QLineEdit#countdownName {
+    background: #252b39; color: #d4e1e4; border: 1px solid #535b6a; border-radius: 0; padding: 3px;
+    selection-background-color: #4e4d7a; selection-color: white;
+}
+#ItemPropertiesDialog QLineEdit#propertyName:focus, #CountdownProperties QLineEdit#countdownName:focus { border-color: #80a4ae; }
 #ItemPropertiesDialog QDoubleSpinBox, #ItemPropertiesDialog QPlainTextEdit {
     background: #252b39; color: #d4e1e4; border: 1px solid #535b6a; padding: 3px;
     selection-background-color: #4e4d7a; selection-color: white;
@@ -95,3 +113,5 @@ QStatusBar { background: #181e2c; }
     background: #262c3b; color: #80a4ae; border: 1px solid #686b74; padding: 4px 10px;
 }
 #ItemPropertiesDialog QPushButton:hover { border-color: #80a4ae; background: #30384b; }
+#Multimedia QPushButton[compact="true"] { padding: 1px; }
+#Multimedia QLabel#MultimediaTime { font-size: 10px; }

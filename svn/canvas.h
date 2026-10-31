@@ -4,11 +4,12 @@
 #include <QImage>
 #include <QUuid>
 #include <QPointer>
+#include <QMenu>
 
 class CanvasItem : public QGraphicsObject {
     Q_OBJECT
 public:
-    enum class Shape { None, Circle, Square, Rectangle };
+    enum class Shape { None, Circle, Square, Rectangle, Line };
     Q_ENUM(Shape)
     explicit CanvasItem(const QString &text);
     explicit CanvasItem(const QImage &image);
@@ -72,7 +73,15 @@ class CanvasView : public QGraphicsView {
 public:
     explicit CanvasView(QWidget *parent = nullptr);
     void fitCanvas();
+    void setZoom(qreal factor);
+    void zoomIn();
+    void zoomOut();
+    bool isCanvasFitted() const { return autoFit; }
 signals:
+    void zoomChanged(qreal factor);
+    void clipboardMenuRequested(QMenu *menu, CanvasItem *item, QPointF position);
+    void copyRequested(bool cut);
+    void pasteRequested();
     void addTextRequested(QPointF pos);
     void addImageRequested(QPointF pos);
     void addShapeRequested(CanvasItem::Shape shape, QPointF pos);
@@ -85,4 +94,7 @@ protected:
     void contextMenuEvent(QContextMenuEvent *) override;
     void wheelEvent(QWheelEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
+private:
+    bool autoFit = true;
+    bool fitting = false;
 };
