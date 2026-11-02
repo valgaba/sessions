@@ -41,6 +41,11 @@ struct VideoFrames {
 // LibVLC 3 public C ABI. Resolve dynamically so the rest of Sessions works
 // without VLC, and never load libraries from the current working directory.
 namespace {
+struct VlcAudioDevice {
+    VlcAudioDevice *next;
+    char *id;
+    char *description;
+};
 struct VlcApi {
     QLibrary core, library;
     void *(*create)(int,const char *const *) = nullptr;
@@ -64,7 +69,13 @@ struct VlcApi {
     void (*setFormat)(void *,unsigned (*)(void **,char *,unsigned *,unsigned *,unsigned *,unsigned *),void (*)(void *)) = nullptr;
     void (*mute)(void *,int) = nullptr;
     int (*getMute)(void *) = nullptr;
+    void (*audioDeviceSet)(void *,const char *,const char *) = nullptr;
+    VlcAudioDevice *(*audioDeviceEnum)(void *) = nullptr;
+    void (*audioDeviceListRelease)(VlcAudioDevice *) = nullptr;
+    char *(*audioDeviceGet)(void *) = nullptr;
+    void (*freeMemory)(void *) = nullptr;
     bool ready = false;
+    bool deviceSelectionAvailable() const { return ready && audioDeviceSet && audioDeviceEnum && audioDeviceListRelease; }
     template<class T> bool resolve(T &function,const char *symbol) {
         function = reinterpret_cast<T>(library.resolve(symbol)); return function != nullptr;
     }
@@ -88,6 +99,13 @@ struct VlcApi {
                 && resolve(seekable,"libvlc_media_player_is_seekable") && resolve(videoCount,"libvlc_media_player_has_vout")
                 && resolve(setCallbacks,"libvlc_video_set_callbacks") && resolve(setFormat,"libvlc_video_set_format_callbacks")
                 && resolve(mute,"libvlc_audio_set_mute") && resolve(getMute,"libvlc_audio_get_mute");
+            // Optional: audio output selection. Older LibVLC builds still play
+            // with the system default when these symbols are missing.
+            resolve(audioDeviceSet,"libvlc_audio_output_device_set");
+            resolve(audioDeviceEnum,"libvlc_audio_output_device_enum");
+            resolve(audioDeviceListRelease,"libvlc_audio_output_device_list_release");
+            resolve(audioDeviceGet,"libvlc_audio_output_device_get");
+            resolve(freeMemory,"libvlc_free");
             return;
         }
     }
@@ -207,6 +225,43 @@ void Multimedia::updateThumbnail(const QImage &image) {
     painter.end();playButton->setIcon(QIcon(preview));
 }
 bool Multimedia::backendAvailable(){return vlc().ready;}
+QList<AudioOutputDevice> Multimedia::audioDevices() {
+    QList<AudioOutputDevice> devices;
+    auto &api=vlc();
+    if(!api.deviceSelectionAvailable())return devices;
+    // Enumeration needs a media player; a short-lived one keeps the list
+    // independent from the players that are currently on air.
+    MediaPlayback enumerator;
+    if(!enumerator.player)return devices;
+    auto *list=api.audioDeviceEnum(enumerator.player);
+    for(auto *entry=list;entry;entry=entry->next) {
+        const QString id=QString::fromUtf8(entry->id?entry->id:"");
+        QString name=QString::fromUtf8(entry->description?entry->description:"");
+        if(name.isEmpty())name=id.isEmpty()?"Predeterminado":id;
+        devices.append({id,name});
+    }
+    if(list)api.audioDeviceListRelease(list);
+    return devices;
+}
+QString Multimedia::currentAudioDevice() const {
+    auto &api=vlc();
+    if(!playback || !playback->player || !api.audioDeviceGet)return appliedAudioDevice;
+    char *id=api.audioDeviceGet(playback->player);
+    const QString result=id?QString::fromUtf8(id):QString();
+    if(id && api.freeMemory)api.freeMemory(id);
+    return result;
+}
+void Multimedia::setAudioDevices(const QString &composition,const QString &output) {
+    compositionAudioDevice=composition;outputAudioDevice=output;
+    if(playback && playback->player)applyAudioDevice(cueMode?compositionAudioDevice:outputAudioDevice);
+}
+void Multimedia::applyAudioDevice(const QString &deviceId) {
+    auto &api=vlc();
+    if(!playback || !playback->player || !api.audioDeviceSet)return;
+    if(audioDeviceApplied && appliedAudioDevice==deviceId)return;
+    api.audioDeviceSet(playback->player,nullptr,deviceId.toUtf8().constData());
+    appliedAudioDevice=deviceId;audioDeviceApplied=true;
+}
 bool Multimedia::purges() const {return purgeButton->isChecked();}
 bool Multimedia::playsNext() const {return nextButton->isChecked();}
 bool Multimedia::mixes() const {return mixButton->isChecked();}
@@ -288,10 +343,12 @@ bool Multimedia::startPlayback() {
         frames=std::make_unique<VideoFrames>();frames->notify=[this,generation]{QMetaObject::invokeMethod(this,[this,generation]{if(generation==frameGeneration)receiveFrame();},Qt::QueuedConnection);};
         api.setCallbacks(playback->player,VideoFrames::lock,VideoFrames::unlock,VideoFrames::display,frames.get());
         api.setFormat(playback->player,VideoFrames::format,nullptr);
+        audioDeviceApplied=false;appliedAudioDevice.clear();
     }
     const bool audioOnly=QStringList{"mp3","wav","flac","ogg","opus","aac","m4a","wma","aif","aiff"}.contains(QFileInfo(path).suffix().toLower());
     vlc().mute(playback->player,cueMode && !audioOnly?1:0);
     if(finished){vlc().stop(playback->player);finished=false;finishedTime=0;shownPosition=0;seeking=false;awaitingFreshFrame=true;slider->setValue(slider->minimum());updateTime(0,duration());}
+    applyAudioDevice(cueMode?compositionAudioDevice:outputAudioDevice);
     acceptFrames=true;
     if(!isPlaying() && vlc().play(playback->player)<0){acceptFrames=false;status->setText("Error al reproducir");return false;}
     status->setText("Cargando…");playButton->setEnabled(cueMode);stopButton->setEnabled(true);poll.start();

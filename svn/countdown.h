@@ -70,4 +70,5 @@ private:
     int lastPublished = -1;
     bool lastHidden = false;
     bool lastOverdue = false;
+    bool lastWarning = false;
 };

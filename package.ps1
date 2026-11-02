@@ -22,10 +22,22 @@ if (Test-Path -LiteralPath $stage) {
 }
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $SourceBin 'sessions.exe'), (Join-Path $workspacePath 'svn\radit.qss') -Destination $stage
-& "$qtBin\windeployqt.exe" --release --compiler-runtime --no-translations --dir $stage (Join-Path $stage 'sessions.exe')
-if ($LASTEXITCODE) { throw 'Falló el despliegue de Qt' }
+$deployCommand = '"' + (Join-Path $qtBin 'windeployqt.exe') + '" --release --compiler-runtime --no-translations --dir "' + $stage + '" "' + (Join-Path $stage 'sessions.exe') + '"'
+$deployPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& cmd /c $deployCommand
+$deployExit = $LASTEXITCODE
+$ErrorActionPreference = $deployPreference
+if ($deployExit) { throw 'Falló el despliegue de Qt' }
 # Tests use qoffscreen; retain this plugin for validation of the distributed build.
 Copy-Item -LiteralPath (Join-Path $qtBin '..\plugins\platforms\qoffscreen.dll') -Destination (Join-Path $stage 'platforms') -Force
+# Bundled fonts travel beside the executable; Sessions registers them at startup.
+$fontSource = Join-Path $workspacePath 'font'
+if (Test-Path -LiteralPath $fontSource) {
+    $fontStage = Join-Path $stage 'font'
+    New-Item -ItemType Directory -Path $fontStage -Force | Out-Null
+    Copy-Item -Path (Join-Path $fontSource '*') -Destination $fontStage -Recurse -Force
+}
 $vlc = Join-Path $stage 'vlc'
 New-Item -ItemType Directory -Path $vlc -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $VlcDirectory 'libvlc.dll'), (Join-Path $VlcDirectory 'libvlccore.dll') -Destination $vlc
@@ -38,6 +50,9 @@ New-Item -ItemType Directory -Path $licenses -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $workspacePath 'LICENSE') -Destination (Join-Path $licenses 'Sessions-GPL-3.0.txt')
 Copy-Item -LiteralPath (Join-Path $VlcDirectory 'COPYING.txt') -Destination (Join-Path $licenses 'VLC-COPYING.txt')
 Copy-Item -LiteralPath (Join-Path $VlcDirectory 'AUTHORS.txt') -Destination (Join-Path $licenses 'VLC-AUTHORS.txt')
+if (Test-Path -LiteralPath (Join-Path $fontSource 'OFL.txt')) {
+    Copy-Item -LiteralPath (Join-Path $fontSource 'OFL.txt') -Destination (Join-Path $licenses 'Montserrat-OFL.txt')
+}
 Copy-Item -LiteralPath (Join-Path $workspacePath 'svn\distribution\THIRD_PARTY_NOTICES.txt') -Destination $licenses
 Copy-Item -LiteralPath (Join-Path $workspacePath 'svn\distribution\README-WINDOWS.txt') -Destination (Join-Path $stage 'README.txt')
 foreach ($licenseFile in Get-ChildItem -LiteralPath (Join-Path $workspacePath 'svn\distribution\licenses') -File) {

@@ -52,6 +52,14 @@ try {
         $iconEngines = Join-Path $destination 'iconengines'
         New-Item -ItemType Directory -Path $iconEngines -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $qtBin '..\plugins\iconengines\qsvgicon.dll') -Destination $iconEngines -Force
+        # Fonts stay next to the executable and are registered by the application;
+        # they are never installed in Windows.
+        $fontSource = Join-Path $PSScriptRoot 'font'
+        $fontDestination = Join-Path $destination 'font'
+        if (Test-Path -LiteralPath $fontSource) {
+            New-Item -ItemType Directory -Path $fontDestination -Force | Out-Null
+            Copy-Item -Path (Join-Path $fontSource '*') -Destination $fontDestination -Recurse -Force
+        }
     }
     if ($Test) {
         $process = Start-Process -FilePath $exe -ArgumentList '--smoke-test' -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $buildDir 'test-results.txt') -RedirectStandardError (Join-Path $buildDir 'test-errors.txt')

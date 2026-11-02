@@ -12,6 +12,11 @@ struct MediaPlayback;
 struct VideoFrames;
 struct ThumbnailProbe;
 
+struct AudioOutputDevice {
+    QString id;
+    QString name;
+};
+
 class Multimedia : public QWidget {
     Q_OBJECT
 public:
@@ -43,6 +48,9 @@ public:
     void setLoop(bool enabled);
     static bool isImageFile(const QString &file);
     static bool backendAvailable();
+    static QList<AudioOutputDevice> audioDevices();
+    QString currentAudioDevice() const;
+    void setAudioDevices(const QString &composition, const QString &output);
 public slots:
     void play();
     void cue();
@@ -63,6 +71,7 @@ protected:
 private:
     void stopPlayback(bool clearOutput);
     bool startPlayback();
+    void applyAudioDevice(const QString &deviceId);
     void restartForLoop();
     void receiveFrame();
     void updatePlayback();
@@ -70,6 +79,10 @@ private:
     void updateThumbnail(const QImage &image);
     QString mediaName = "Multimedia";
     QString path;
+    QString compositionAudioDevice;
+    QString outputAudioDevice;
+    QString appliedAudioDevice;
+    bool audioDeviceApplied = false;
     QLabel *title;
     QLabel *status;
     QLabel *time;

@@ -24,6 +24,8 @@ SOURCES += slider.cpp
 HEADERS += slider.h
 SOURCES += aboutdialog.cpp
 HEADERS += aboutdialog.h
+SOURCES += fontloader.cpp
+HEADERS += fontloader.h
 RESOURCES += sessions.qrc
 DESTDIR = $$PWD/../out/bin
 # Keep intermediates and linker response files local to each build directory.

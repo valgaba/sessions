@@ -27,5 +27,11 @@ MinGW-w64 runtime: see mingw-w64 COPYING notices.
 Sources: https://gcc.gnu.org/releases.html
 https://www.mingw-w64.org/
 
+Montserrat fonts (variable and static), included in the font folder
+Copyright The Montserrat Project Authors.
+Distributed under the SIL Open Font License 1.1.
+Full license text: licenses/Montserrat-OFL.txt
+Project: https://github.com/JulietaUla/Montserrat
+
 All libraries remain separate DLLs. This package contains no user projects,
 personal settings, recordings or test executables.

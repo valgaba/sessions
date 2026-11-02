@@ -71,8 +71,8 @@ void CanvasItem::setVideoFrame(const QImage &frame) {
     if (frame.isNull()) return;
     image = frame; update();
 }
-void CanvasItem::setTimerAppearance(bool overdue, bool hidden) {
-    overdueText = overdue; hiddenText = hidden; update();
+void CanvasItem::setTimerAppearance(bool overdue, bool hidden, bool warning) {
+    overdueText = overdue; hiddenText = hidden; warningText = warning; update();
 }
 void CanvasItem::setLocked(bool value) {
     locked = value; resizing = -1; setFlag(ItemIsMovable, !value); update();
@@ -121,8 +121,8 @@ void CanvasItem::paint(QPainter *p, const QStyleOptionGraphicsItem *, QWidget *)
         else if (geometryType == Shape::Circle) p->drawEllipse(r); else p->drawRect(r);
     } else {
         p->save(); p->setClipRect(r); p->scale(size.width()/320.0, size.height()/100.0);
-        p->setFont(font); p->setPen(overdueText ? QColor(Qt::red) : color);
-        if (hiddenText) p->setOpacity(0);
+        p->setFont(font); p->setPen(overdueText ? QColor(Qt::red) : warningText ? QColor("#d5ad5d") : color);
+        p->setOpacity(timerOpacity());
         p->drawText(QRectF(4,4,312,92), Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, text); p->restore();
     }
     if (isSelected() && !locked) {

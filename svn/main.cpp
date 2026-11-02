@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "fontloader.h"
 #include <QApplication>
 #include <QStyleFactory>
 #include <QStyle>
@@ -11,6 +12,9 @@ int mediaLoadTest(QApplication &app);
 int main(int argc,char **argv){
     QApplication app(argc,argv);app.setApplicationName("Sessions");app.setOrganizationName("Sessions");
     app.setApplicationVersion("1.0.0");app.setWindowIcon(QIcon(":/icons/SessionsAppIcon.png"));
+    QString fontDirectory=QDir(app.applicationDirPath()).filePath("font");
+    if(!QDir(fontDirectory).exists())fontDirectory=QDir(app.applicationDirPath()).filePath("fonts");
+    FontLoader::load(fontDirectory);
     app.setStyle(QStyleFactory::create("Windows"));app.setFont(QFont("Tahoma",9));
     QPalette palette = app.style()->standardPalette();
     palette.setColor(QPalette::Window, QColor("#181e2c"));

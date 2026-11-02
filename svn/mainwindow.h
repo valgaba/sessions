@@ -5,8 +5,9 @@
 #include <QHash>
 #include "canvas.h"
 class QCloseEvent;
-class OutputView;
 class QScreen;
+class AudioDeviceCombo;
+class OutputView;
 class WidgetContainer;
 class Countdown;
 class SourcePanel;
@@ -23,7 +24,7 @@ public:
     QGraphicsScene *outputScene;
     OutputView *outputPreview;
     OutputView *externalOutput;
-    CanvasItem *addItem(CanvasItem *item, QPointF pos);
+    CanvasItem *addItem(CanvasItem *item, QPointF pos, bool markChanged = true);
     bool writeProject(const QString &path);
     bool readProject(const QString &path);
     void removeSelection();
@@ -46,6 +47,9 @@ private:
     void startOutputFade(const QImage &previous);
     void cancelOutputFade();
     void showFadeOptions();
+    void refreshAudioCombos();
+    void applyAudioDevices();
+    void updateAudioTooltips();
     QString suggestedElementName(const QString &base) const;
     void addClipboardActions(QMenu *menu, const QList<CanvasItem *> &items, const QPointF &position = {}, bool usePosition = false);
     void copyItems(const QList<CanvasItem *> &items, bool cut);
@@ -72,5 +76,9 @@ private:
     QPointer<QScreen> outputScreen;
     WidgetContainer *bottom;
     SourcePanel *sources;
+    AudioDeviceCombo *compositionAudio = nullptr;
+    AudioDeviceCombo *outputAudio = nullptr;
+    QString compositionAudioId;
+    QString outputAudioId;
     QList<WidgetContainer *> countdownContainers;
 };

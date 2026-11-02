@@ -25,9 +25,11 @@ public:
     void setVideoFrame(const QImage &frame);
     void setLocked(bool locked);
     bool isLocked() const { return locked; }
-    void setTimerAppearance(bool overdue, bool hidden);
+    void setTimerAppearance(bool overdue, bool hidden, bool warning = false);
     bool timerOverdue() const { return overdueText; }
     bool timerHidden() const { return hiddenText; }
+    bool timerWarning() const { return warningText; }
+    qreal timerOpacity() const { return hiddenText ? (warningText || overdueText ? 0.5 : 0.0) : 1.0; }
     void setTimerOwner(QObject *owner) { countdownOwner = owner; }
     QObject *timerOwner() const { return countdownOwner.data(); }
     QString text;
@@ -57,6 +59,7 @@ private:
     bool locked = false;
     bool overdueText = false;
     bool hiddenText = false;
+    bool warningText = false;
     QPointer<QObject> countdownOwner;
     Shape geometryType = Shape::None;
     QSizeF size{320, 100};

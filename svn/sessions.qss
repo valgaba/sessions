@@ -74,6 +74,11 @@ QSplitter#topSplitter::handle:horizontal { background: #181e2c; border: none; }
 }
 #topSplitter QPushButton:hover { border-color: #80a4ae; background: #30384b; }
 #topSplitter QPushButton:disabled { color: #686b74; border-color: #333b4f; }
+#topSplitter QComboBox:disabled { color: #686b74; border-color: #333b4f; }
+QComboBox QAbstractItemView {
+    background: #252b39; color: #d4e1e4; border: 1px solid #535b6a;
+    selection-background-color: #4e4d7a; selection-color: white; outline: 0;
+}
 #topSplitter QLabel { background: transparent; border: none; padding: 3px; }
 QStatusBar { background: #181e2c; }
 #Countdown { background: #181e2c; border: 1px solid #333b4f; }

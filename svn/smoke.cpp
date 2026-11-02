@@ -6,6 +6,7 @@
 #include "sourcepanel.h"
 #include "multimedia.h"
 #include "aboutdialog.h"
+#include "fontloader.h"
 #include <QtWidgets>
 #include <QtTest/QTest>
 #include <cstdio>
@@ -17,7 +18,20 @@ int smokeTest(QApplication &app) {
     int failures=0;
     auto check=[&](bool ok,const char *label){std::printf("%s %s\n",ok?"PASS":"FAIL",label);std::fflush(stdout);if(!ok)++failures;};
     MainWindow w;w.setFadeDuration(0);w.show();app.processEvents();w.view->fitCanvas();app.processEvents();
+    const QString fontFolder = QApplication::applicationDirPath() + "/font";
+    check(!QDir(fontFolder).exists() || FontLoader::loadedFamilies().contains("Montserrat"), "bundled Montserrat fonts load from the application font folder");
     check(!app.windowIcon().pixmap(32,32).isNull() && !w.windowIcon().isNull(),"Sessions application icon is available to windows");
+    auto *compositionAudio=w.findChild<QComboBox *>("compositionAudioDevice");
+    auto *outputAudio=w.findChild<QComboBox *>("outputAudioDevice");
+    check(compositionAudio && outputAudio,"composition and output headers offer audio output selectors");
+    if(compositionAudio && outputAudio) {
+        if(Multimedia::backendAvailable()) {
+            const auto devices=Multimedia::audioDevices();
+            check(compositionAudio->count()==devices.size() && outputAudio->count()==devices.size(),"audio selectors list every available output device");
+            check(compositionAudio->isEnabled()==!devices.isEmpty() && outputAudio->isEnabled()==!devices.isEmpty(),"audio selectors enable only when output devices are available");
+        }
+        check(compositionAudio->toolTip().startsWith("Audio de composición") && outputAudio->toolTip().startsWith("Audio de salida"),"audio selectors describe their composition and output role");
+    }
     check(!QIcon(":/icons/Play.svg").pixmap(16,16).isNull() && !QIcon(":/icons/ActionCopy.svg").pixmap(16,16).isNull(),"original Radit SVG icons render through deployed icon engine");
     auto *aboutAction=w.findChild<QAction *>("aboutSessions");
     if(aboutAction)aboutAction->trigger();
@@ -139,6 +153,35 @@ int smokeTest(QApplication &app) {
     check(timerText->text > overtime && timerText->timerOverdue(), "overtime resumes counting upwards");
     QTest::mouseClick(stop, Qt::LeftButton);
     check(timerText->text == "00:00:02.0" && !timerText->timerOverdue() && !timerText->timerHidden() && timerText->color == QColor(Qt::white), "Countdown Stop restores configured duration and normal appearance");
+    countdown->configure(11,timerText);
+    QTest::mouseClick(play,Qt::LeftButton);
+    check(!timerText->timerWarning(),"Countdown keeps its normal color before the final ten seconds");
+    QTest::qWait(1300);
+    check(timerText->timerWarning() && !timerText->timerOverdue(),"Countdown turns amber during the final ten seconds");
+    bool warningHidden=false,warningVisible=false,warningSoft=false;
+    QElapsedTimer warningSpan;warningSpan.start();
+    while(warningSpan.elapsed()<1100){
+        if(timerText->timerHidden()){warningHidden=true;if(timerText->timerOpacity()==0.5)warningSoft=true;}
+        else warningVisible=true;
+        QTest::qWait(60);
+    }
+    check(warningHidden && warningVisible && warningSoft && !timerText->timerOverdue(),"Countdown blinks softly during the final ten seconds");
+    QTest::mouseClick(stop,Qt::LeftButton);
+    check(!timerText->timerWarning() && timerText->color == QColor(Qt::white),"Countdown Stop restores the normal color after the warning");
+    countdown->configure(1,timerText);
+    QTest::mouseClick(play,Qt::LeftButton);
+    QElapsedTimer overtimeWait;overtimeWait.start();
+    while(!timerText->timerOverdue() && overtimeWait.elapsed()<3000)QTest::qWait(50);
+    bool overtimeHidden=false,overtimeVisible=false,overtimeSoft=false;
+    QElapsedTimer overtimeSpan;overtimeSpan.start();
+    while(overtimeSpan.elapsed()<1100){
+        if(timerText->timerHidden()){overtimeHidden=true;if(timerText->timerOpacity()==0.5)overtimeSoft=true;}
+        else overtimeVisible=true;
+        QTest::qWait(60);
+    }
+    check(timerText->timerOverdue() && overtimeHidden && overtimeVisible && overtimeSoft,"Countdown keeps a soft blink in overtime");
+    QTest::mouseClick(stop,Qt::LeftButton);
+    check(!timerText->timerHidden() && !timerText->timerWarning(),"Countdown Stop removes the soft blink");
     QTest::mouseClick(play, Qt::LeftButton);
     delete timerText;
     check(countdown->state() == Countdown::State::Stopped && !countdown->associatedText(), "deleting associated text safely stops Countdown");
@@ -233,6 +276,16 @@ int smokeTest(QApplication &app) {
     check(namesSaved && savedCountdown->associatedText()->name == text->name, "text and image names survive save and reopen");
     bool preserved=false;for(auto *base:restored.canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->isImage())preserved=item->image==image;
     check(preserved,"embedded image survives round trip");
+    check(!restored.isWindowModified(),"opening a design leaves no pending changes");
+    if(savedCountdown) {
+        savedCountdown->start();
+        QTest::qWait(250);
+        check(savedCountdown->state()==Countdown::State::Playing && !restored.isWindowModified(),"starting a Countdown does not mark the design as modified");
+        savedCountdown->stop();
+        check(!restored.isWindowModified(),"stopping a Countdown does not mark the design as modified");
+        savedCountdown->setName("Cuenta renombrada");
+        check(restored.isWindowModified(),"changing Countdown properties still marks the design as modified");
+    }
     QFile bad(temp.filePath("bad.sessions"));bad.open(QIODevice::WriteOnly);bad.write("{\"format\":\"sessions\",\"version\":1,\"items\":[{}]}");bad.close();
     check(!restored.readProject(bad.fileName()) && restored.canvas->items().size()==2,"invalid file preserves current design");
     w.canvas->clearSelection();picture->setSelected(true);QTest::keyClick(vp,Qt::Key_Delete);
@@ -261,6 +314,9 @@ int smokeTest(QApplication &app) {
     bool live = false;
     for (auto *base : w.outputScene->items()) if (auto *item = dynamic_cast<CanvasItem *>(base); item && item->id == text->id) live = item->text == "00:00:02.0";
     check(live, "Countdown updates launched output text live");
+    bool warnedOutput = false;
+    for (auto *base : w.outputScene->items()) if (auto *item = dynamic_cast<CanvasItem *>(base); item && item->id == text->id && item->timerWarning()) warnedOutput = true;
+    check(warnedOutput, "amber warning propagates to launched output");
     countdown->pause();
     QTest::qWait(550);
     CanvasItem *liveText = nullptr;
@@ -517,6 +573,31 @@ int smokeTest(QApplication &app) {
     check(!media->loops() && !loopButton->isChecked(),"Loop toggle returns to its normal palette when disabled");
     QTest::mouseClick(media->findChild<QPushButton *>("multimediaPlay"),Qt::LeftButton);
     check(waitFor([&]{return media->isPlaying() && media->position()>150 && media->duration()>4000;}),"Multimedia plays audio and reports position and duration");
+    const auto audioOutputs=Multimedia::audioDevices();
+    QString chosenOutput;
+    for(const auto &device:audioOutputs)if(!device.id.isEmpty()){chosenOutput=device.id;break;}
+    if(!chosenOutput.isEmpty()) {
+        media->setAudioDevices(chosenOutput,chosenOutput);
+        check(waitFor([&]{return media->currentAudioDevice()==chosenOutput;}),"a chosen audio output device is applied to playback");
+        media->setAudioDevices(QString(),QString());
+        if(outputAudio && outputAudio->count()>1) {
+            QSettings settings;
+            const QVariant savedOutput=settings.value("audio/outputDevice");
+            const int originalIndex=outputAudio->currentIndex();
+            int specificIndex=-1;
+            for(int i=0;i<outputAudio->count();++i)if(!outputAudio->itemData(i).toString().isEmpty()){specificIndex=i;break;}
+            if(specificIndex>=0) {
+                const QString picked=outputAudio->itemData(specificIndex).toString();
+                outputAudio->setCurrentIndex(specificIndex);
+                check(waitFor([&]{return media->currentAudioDevice()==picked;}),"choosing a device in the output selector applies it to playback");
+                outputAudio->setCurrentIndex(originalIndex);
+                if(savedOutput.isValid())settings.setValue("audio/outputDevice",savedOutput);else settings.remove("audio/outputDevice");
+            }
+        }
+        Multimedia cueProbe;cueProbe.configure("Audio",audioFile);cueProbe.setAudioDevices(chosenOutput,chosenOutput);cueProbe.cue();
+        check(cueProbe.currentAudioDevice()==chosenOutput,"the composition audio device is applied to Cue playback");
+        cueProbe.stop();
+    }
     QTest::mouseClick(media->findChild<QPushButton *>("multimediaPause"),Qt::LeftButton);
     check(waitFor([&]{return media->isPaused();}),"Multimedia Pause freezes playback");
     const qint64 pausedPosition=media->position();QTest::qWait(300);
@@ -989,6 +1070,7 @@ int smokeTest(QApplication &app) {
         if(blue && red && clip && audio) {
             auto renderColor=[&]{QImage frame(1280,720,QImage::Format_RGB32);frame.fill(Qt::black);QPainter p(&frame);mixed.outputScene->render(&p);p.end();return frame.pixelColor(640,360);};
             blue->play();auto *mixToggle=red->findChild<QPushButton *>("multimediaMix");
+            check(!mixed.isWindowModified(),"showing media in composition does not mark the design as modified");
             QTest::mouseClick(mixToggle,Qt::LeftButton);app.processEvents();
             check(mixToggle->isCheckable() && mixToggle->isChecked() && red->mixes() && !red->isPlaying() && renderColor().blue()>240,"Mix toggles its mode without starting playback or changing output");
             red->play();app.processEvents();const QColor blended=renderColor();

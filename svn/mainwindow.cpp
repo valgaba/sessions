@@ -14,6 +14,7 @@
 #include <QSaveFile>
 #include <QScreen>
 #include <QWindow>
+#include <functional>
 #include <cmath>
 
 // Radit options use a flat title strip instead of the native Windows frame.
@@ -32,6 +33,18 @@ protected:
     }
 };
 
+// Rescan audio outputs whenever the popup opens, so USB or HDMI devices
+// connected while Sessions is running appear without restarting the app.
+class AudioDeviceCombo : public QComboBox {
+public:
+    using QComboBox::QComboBox;
+    std::function<void()> beforePopup;
+    void showPopup() override {
+        if(beforePopup)beforePopup();
+        QComboBox::showPopup();
+    }
+};
+
 MainWindow::MainWindow() {
     setFadeDuration(QSettings().value("output/fadeDurationMs",1000).toInt());
     fadeAnimation=new QVariantAnimation(this);
@@ -40,6 +53,19 @@ MainWindow::MainWindow() {
     connect(fadeAnimation,&QVariantAnimation::valueChanged,this,[this](const QVariant &value){if(fadeOverlay)fadeOverlay->setOpacity(value.toReal());});
     connect(fadeAnimation,&QVariantAnimation::finished,this,[this]{delete fadeOverlay;fadeOverlay=nullptr;});
     resize(1200,800); setWindowTitle("Sessions — Sin título[*]");
+    compositionAudioId=QSettings().value("audio/compositionDevice").toString();
+    outputAudioId=QSettings().value("audio/outputDevice").toString();
+    auto makeAudioCombo=[](const char *objectName,const char *accessible){
+        auto *combo=new AudioDeviceCombo;
+        combo->setObjectName(objectName);
+        combo->setAccessibleName(accessible);
+        combo->setMinimumWidth(170);combo->setMaximumWidth(260);
+        combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        combo->setMinimumContentsLength(18);
+        return combo;
+    };
+    compositionAudio=makeAudioCombo("compositionAudioDevice","Dispositivo de audio de la composición");
+    outputAudio=makeAudioCombo("outputAudioDevice","Dispositivo de audio de la salida");
     auto *splitter = new QSplitter(Qt::Vertical, this);
     splitter->setObjectName("mainSplitter"); splitter->setChildrenCollapsible(false);
     setCentralWidget(splitter);
@@ -53,6 +79,10 @@ MainWindow::MainWindow() {
     auto *compositionHeader = new QHBoxLayout;
     compositionHeader->addWidget(new QLabel("COMPOSICIÓN  ·  1280 × 720"));
     compositionHeader->addStretch();
+    auto *compositionAudioLabel=new QLabel("Audio");
+    compositionAudioLabel->setToolTip("Dispositivo de audio de la composición (Cue)");
+    compositionHeader->addWidget(compositionAudioLabel);
+    compositionHeader->addWidget(compositionAudio);
     auto *launch = new QPushButton(QIcon(":/icons/Next.svg"),"Lanzar");
     launch->setObjectName("launchComposition");
     launch->setCursor(Qt::PointingHandCursor);
@@ -81,12 +111,32 @@ MainWindow::MainWindow() {
     outputScene->setSceneRect(canvas->sceneRect()); outputScene->setBackgroundBrush(Qt::black);
     auto *output = new QWidget;
     auto *outputLayout = new QVBoxLayout(output); outputLayout->setContentsMargins(4,4,4,4);
-    outputLayout->addWidget(new QLabel("SALIDA  ·  1280 × 720"));
+    auto *outputHeader = new QHBoxLayout;
+    outputHeader->addWidget(new QLabel("SALIDA  ·  1280 × 720"));
+    outputHeader->addStretch();
+    auto *outputAudioLabel=new QLabel("Audio");
+    outputAudioLabel->setToolTip("Dispositivo de audio de la salida (Play)");
+    outputHeader->addWidget(outputAudioLabel);
+    outputHeader->addWidget(outputAudio);
+    outputLayout->addLayout(outputHeader);
     outputPreview = new OutputView(outputScene); outputPreview->setObjectName("outputPreview");
     outputLayout->addWidget(outputPreview, 1);
     outputPreview->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(outputPreview, &QWidget::customContextMenuRequested, this, &MainWindow::showOutputMenu);
     top->addWidget(output); top->setSizes({600,600});
+    connect(compositionAudio,&QComboBox::currentIndexChanged,this,[this](int){
+        compositionAudioId=compositionAudio->currentData().toString();
+        QSettings().setValue("audio/compositionDevice",compositionAudioId);
+        updateAudioTooltips();applyAudioDevices();
+    });
+    connect(outputAudio,&QComboBox::currentIndexChanged,this,[this](int){
+        outputAudioId=outputAudio->currentData().toString();
+        QSettings().setValue("audio/outputDevice",outputAudioId);
+        updateAudioTooltips();applyAudioDevices();
+    });
+    compositionAudio->beforePopup=[this]{refreshAudioCombos();};
+    outputAudio->beforePopup=[this]{refreshAudioCombos();};
+    refreshAudioCombos();
     auto *transferHandle = top->handle(1);
     transferHandle->setObjectName("transferHandle");
     transferHandle->setCursor(Qt::ArrowCursor);
@@ -287,7 +337,7 @@ void MainWindow::launchComposition() {
         copy->mediaId = source->mediaId;
         copy->name = source->name;
         copy->setTextFont(source->font); copy->color = source->color;
-        copy->setTimerAppearance(source->timerOverdue(), source->timerHidden());
+        copy->setTimerAppearance(source->timerOverdue(), source->timerHidden(), source->timerWarning());
         copy->setVisible(source->mediaId.isEmpty()?source->isVisible():true);
         copy->setItemSize(source->itemSize()); copy->setPos(source->pos()); copy->setZValue(source->zValue());
         copy->setFlags(QGraphicsItem::GraphicsItemFlags());
@@ -317,6 +367,40 @@ void MainWindow::showFadeOptions() {
     dialog.setMinimumWidth(420);root->setSizeConstraint(QLayout::SetFixedSize);
     connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
     if(dialog.exec()==QDialog::Accepted){setFadeDuration(qRound(seconds->value()*1000));QSettings().setValue("output/fadeDurationMs",fadeDurationMs);}
+}
+void MainWindow::refreshAudioCombos() {
+    if(!compositionAudio || !outputAudio)return;
+    const auto devices=Multimedia::audioDevices();
+    auto fill=[&](QComboBox *combo,QString &selected){
+        const QSignalBlocker blocker(combo);
+        const QString previous=selected;
+        combo->clear();
+        for(const auto &device:devices)combo->addItem(device.name,device.id);
+        combo->setEnabled(!devices.isEmpty());
+        if(devices.isEmpty()){combo->addItem(Multimedia::backendAvailable()?"Sin dispositivos de audio":"VLC 3 no disponible");return;}
+        int index=combo->findData(selected);
+        if(index<0)index=combo->findData(QString());
+        if(index<0)index=0;
+        combo->setCurrentIndex(index);
+        selected=combo->itemData(index).toString();
+        if(selected!=previous)QSettings().setValue(combo==compositionAudio?"audio/compositionDevice":"audio/outputDevice",selected);
+    };
+    fill(compositionAudio,compositionAudioId);
+    fill(outputAudio,outputAudioId);
+    updateAudioTooltips();
+    applyAudioDevices();
+}
+void MainWindow::applyAudioDevices() {
+    for(auto *media:findChildren<Multimedia *>())media->setAudioDevices(compositionAudioId,outputAudioId);
+}
+void MainWindow::updateAudioTooltips() {
+    auto describe=[this](QComboBox *combo,const QString &role){
+        if(!combo)return;
+        const QString current=combo->currentText();
+        combo->setToolTip(current.isEmpty()?role:role+" · "+current);
+    };
+    describe(compositionAudio,"Audio de composición (Cue)");
+    describe(outputAudio,"Audio de salida (Play)");
 }
 QImage MainWindow::captureOutput() const {
     QImage image(outputScene->sceneRect().size().toSize(),QImage::Format_RGB32);image.fill(Qt::black);
@@ -404,9 +488,8 @@ Countdown *MainWindow::createCountdown(const QString &name, int seconds, const Q
     connect(countdown, &Countdown::textUpdated, this, [this](CanvasItem *source) {
         for (auto *base : outputScene->items()) if (auto *item = dynamic_cast<CanvasItem *>(base); item && item->id == source->id) {
             item->setText(source->text);
-            item->setTimerAppearance(source->timerOverdue(), source->timerHidden());
+            item->setTimerAppearance(source->timerOverdue(), source->timerHidden(), source->timerWarning());
         }
-        changed();
     });
     bottom->addWidget(countdown);
     return countdown;
@@ -417,10 +500,10 @@ CanvasItem *MainWindow::prepareVideo(Multimedia *media,const QImage &frame) {
     auto *item=new CanvasItem(frame);item->mediaId=media->id;item->name=media->name();item->setItemSize(canvas->sceneRect().size());
     qreal lowest=0;for(auto *base:canvas->items())lowest=qMin(lowest,base->zValue());item->setZValue(lowest-1);
     item->setVisible(previewMedia==media);
-    return addItem(item,canvas->sceneRect().topLeft());
+    return addItem(item,canvas->sceneRect().topLeft(),false);
 }
 Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file,const QString &id,bool loop) {
-    auto *media=new Multimedia;if(!id.isEmpty())media->id=id;media->configure(name,file);if(loop)media->setLoop(true);bottom->addWidget(media);
+    auto *media=new Multimedia;if(!id.isEmpty())media->id=id;media->setAudioDevices(compositionAudioId,outputAudioId);media->configure(name,file);if(loop)media->setLoop(true);bottom->addWidget(media);
     auto selectPreview=[this,media]{
         previewMedia=media;
         for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && !item->mediaId.isEmpty())item->setVisible(item->mediaId==media->id && !media->currentFrame().isNull());
@@ -489,11 +572,11 @@ QString MainWindow::suggestedElementName(const QString &base) const {
     int number=1;while(names.contains((base+QString::number(number)).toCaseFolded()))++number;
     return base+QString::number(number);
 }
-CanvasItem *MainWindow::addItem(CanvasItem *item,QPointF pos){
+CanvasItem *MainWindow::addItem(CanvasItem *item,QPointF pos,bool markChanged){
     canvas->clearSelection(); canvas->addItem(item);item->setPos(pos);
     connect(item,&CanvasItem::edited,this,&MainWindow::changed);
     connect(item,&CanvasItem::editRequested,this,&MainWindow::editText);
-    item->setSelected(true);changed();return item;
+    item->setSelected(true);if(markChanged)changed();return item;
 }
 void MainWindow::removeSelection(){ auto items=canvas->selectedItems();if(items.isEmpty())return;for(auto *item:items)delete item;changed(); }
 namespace {

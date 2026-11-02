@@ -17,6 +17,12 @@
 #include <QIcon>
 #include <QLineEdit>
 
+// Final warning: the text turns amber during the last ten seconds, before
+// switching to red once the countdown goes past zero.
+namespace {
+constexpr qint64 warningMilliseconds = 10 * 1000;
+}
+
 Countdown::Countdown(QWidget *parent) : QWidget(parent) {
     setObjectName("Countdown");
     setFocusPolicy(Qt::StrongFocus);
@@ -128,7 +134,9 @@ void Countdown::setTotalText(CanvasItem *text, bool updateText) {
 }
 void Countdown::publish(bool updateText) {
     const bool overdue = remainingMs <= 0;
-    const bool hidden = currentState == State::Paused && (elapsed.elapsed() / 500) % 2;
+    const bool warning = !overdue && currentState != State::Stopped && remainingMs <= warningMilliseconds;
+    const bool softBlink = warning || overdue;
+    const bool hidden = (currentState == State::Paused || (currentState == State::Playing && softBlink)) && (elapsed.elapsed() / 500) % 2;
     const int tenths = int(remainingMs > 0 ? (remainingMs + 99) / 100 : -remainingMs / 100);
     const QString formatted=formattedTime(remainingMs);
     if(updateText && totalTarget && composition && totalTarget->scene()==composition && totalTarget!=target) {
@@ -141,11 +149,11 @@ void Countdown::publish(bool updateText) {
     status->setText(QString("%1 · %2").arg(currentState == State::Playing ? "En marcha" : currentState == State::Paused ? "En pausa" : "Detenido", formatted));
     if (!updateText || !validTarget()) return;
     if (lastPublished == -1) target->setTimerOwner(this);
-    if (target->timerOwner() != this || (tenths == lastPublished && hidden == lastHidden && overdue == lastOverdue)) return;
+    if (target->timerOwner() != this || (tenths == lastPublished && hidden == lastHidden && overdue == lastOverdue && warning == lastWarning)) return;
     lastPublished = tenths;
-    lastHidden = hidden; lastOverdue = overdue;
+    lastHidden = hidden; lastOverdue = overdue; lastWarning = warning;
     target->setText(formatted);
-    target->setTimerAppearance(overdue, hidden);
+    target->setTimerAppearance(overdue, hidden, warning);
     emit textUpdated(target);
 }
 void Countdown::showTime() {
