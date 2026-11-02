@@ -6,6 +6,8 @@
 #include "sourcepanel.h"
 #include "multimedia.h"
 #include "aboutdialog.h"
+#include "audiometer.h"
+#include "vumeter.h"
 #include <QtWidgets>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -55,17 +57,58 @@ MainWindow::MainWindow() {
     resize(1200,800); setWindowTitle("Sessions — Sin título[*]");
     compositionAudioId=QSettings().value("audio/compositionDevice").toString();
     outputAudioId=QSettings().value("audio/outputDevice").toString();
+    compositionVolumeValue=qBound(0,QSettings().value("audio/compositionVolume",100).toInt(),100);
+    outputVolumeValue=qBound(0,QSettings().value("audio/outputVolume",100).toInt(),100);
     auto makeAudioCombo=[](const char *objectName,const char *accessible){
         auto *combo=new AudioDeviceCombo;
         combo->setObjectName(objectName);
         combo->setAccessibleName(accessible);
-        combo->setMinimumWidth(170);combo->setMaximumWidth(260);
+        combo->setMinimumWidth(115);combo->setMaximumWidth(220);
         combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-        combo->setMinimumContentsLength(18);
+        combo->setMinimumContentsLength(14);
         return combo;
     };
     compositionAudio=makeAudioCombo("compositionAudioDevice","Dispositivo de audio de la composición");
     outputAudio=makeAudioCombo("outputAudioDevice","Dispositivo de audio de la salida");
+    auto makeVolume=[](const char *objectName,const char *accessible){
+        auto *slider=new QSlider(Qt::Horizontal);
+        slider->setObjectName(objectName);
+        slider->setAccessibleName(accessible);
+        slider->setRange(0,100);
+        slider->setSingleStep(1);
+        slider->setPageStep(5);
+        slider->setFixedWidth(110);
+        slider->setFixedHeight(26);
+        return slider;
+    };
+    compositionVolume=makeVolume("compositionVolume","Volumen de la composición");
+    outputVolume=makeVolume("outputVolume","Volumen de la salida");
+    compositionVolume->setValue(compositionVolumeValue);
+    outputVolume->setValue(outputVolumeValue);
+    compositionVolumeText=new QLabel(QString::number(compositionVolumeValue)+" %");
+    compositionVolumeText->setObjectName("compositionVolumeText");
+    compositionVolumeText->setFixedWidth(40);
+    compositionVolumeText->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+    outputVolumeText=new QLabel(QString::number(outputVolumeValue)+" %");
+    outputVolumeText->setObjectName("outputVolumeText");
+    outputVolumeText->setFixedWidth(40);
+    outputVolumeText->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+    compositionVuMeter=new VuMeter;
+    compositionVuMeter->setObjectName("compositionVuMeter");
+    compositionVuMeter->setToolTip("Nivel de audio del dispositivo de composición");
+    outputVuMeter=new VuMeter;
+    outputVuMeter->setObjectName("outputVuMeter");
+    outputVuMeter->setToolTip("Nivel de audio del dispositivo de salida");
+    compositionAudioMeter=new AudioMeter(this);
+    outputAudioMeter=new AudioMeter(this);
+    compositionAudioMeter->setObjectName("compositionAudioMeter");
+    outputAudioMeter->setObjectName("outputAudioMeter");
+    connect(compositionAudioMeter,&AudioMeter::levelsChanged,compositionVuMeter,&VuMeter::setLevels);
+    connect(outputAudioMeter,&AudioMeter::levelsChanged,outputVuMeter,&VuMeter::setLevels);
+    auto *activityTimer=new QTimer(this);
+    activityTimer->setInterval(100);
+    connect(activityTimer,&QTimer::timeout,this,&MainWindow::updateAudioActivity);
+    activityTimer->start();
     auto *splitter = new QSplitter(Qt::Vertical, this);
     splitter->setObjectName("mainSplitter"); splitter->setChildrenCollapsible(false);
     setCentralWidget(splitter);
@@ -77,11 +120,12 @@ MainWindow::MainWindow() {
     auto *compositionLayout = new QVBoxLayout(composition);
     compositionLayout->setContentsMargins(4,4,4,4);
     auto *compositionHeader = new QHBoxLayout;
+    compositionHeader->setSpacing(4);
     compositionHeader->addWidget(new QLabel("COMPOSICIÓN  ·  1280 × 720"));
     compositionHeader->addStretch();
-    auto *compositionAudioLabel=new QLabel("Audio");
-    compositionAudioLabel->setToolTip("Dispositivo de audio de la composición (Cue)");
-    compositionHeader->addWidget(compositionAudioLabel);
+    compositionHeader->addWidget(compositionVolume);
+    compositionHeader->addWidget(compositionVolumeText);
+    compositionHeader->addWidget(compositionVuMeter);
     compositionHeader->addWidget(compositionAudio);
     auto *launch = new QPushButton(QIcon(":/icons/Next.svg"),"Lanzar");
     launch->setObjectName("launchComposition");
@@ -112,11 +156,12 @@ MainWindow::MainWindow() {
     auto *output = new QWidget;
     auto *outputLayout = new QVBoxLayout(output); outputLayout->setContentsMargins(4,4,4,4);
     auto *outputHeader = new QHBoxLayout;
+    outputHeader->setSpacing(4);
     outputHeader->addWidget(new QLabel("SALIDA  ·  1280 × 720"));
     outputHeader->addStretch();
-    auto *outputAudioLabel=new QLabel("Audio");
-    outputAudioLabel->setToolTip("Dispositivo de audio de la salida (Play)");
-    outputHeader->addWidget(outputAudioLabel);
+    outputHeader->addWidget(outputVolume);
+    outputHeader->addWidget(outputVolumeText);
+    outputHeader->addWidget(outputVuMeter);
     outputHeader->addWidget(outputAudio);
     outputLayout->addLayout(outputHeader);
     outputPreview = new OutputView(outputScene); outputPreview->setObjectName("outputPreview");
@@ -127,15 +172,28 @@ MainWindow::MainWindow() {
     connect(compositionAudio,&QComboBox::currentIndexChanged,this,[this](int){
         compositionAudioId=compositionAudio->currentData().toString();
         QSettings().setValue("audio/compositionDevice",compositionAudioId);
-        updateAudioTooltips();applyAudioDevices();
+        compositionAudioMeter->setDeviceId(compositionAudioId);
+        updateAudioTooltips();applyAudioDevices();updateAudioActivity();
     });
     connect(outputAudio,&QComboBox::currentIndexChanged,this,[this](int){
         outputAudioId=outputAudio->currentData().toString();
         QSettings().setValue("audio/outputDevice",outputAudioId);
-        updateAudioTooltips();applyAudioDevices();
+        outputAudioMeter->setDeviceId(outputAudioId);
+        updateAudioTooltips();applyAudioDevices();updateAudioActivity();
     });
     compositionAudio->beforePopup=[this]{refreshAudioCombos();};
     outputAudio->beforePopup=[this]{refreshAudioCombos();};
+    connect(compositionVolume,&QSlider::valueChanged,this,[this](int value){
+        compositionVolumeValue=value;
+        QSettings().setValue("audio/compositionVolume",value);
+        updateVolumeTooltips();applyAudioDevices();
+    });
+    connect(outputVolume,&QSlider::valueChanged,this,[this](int value){
+        outputVolumeValue=value;
+        QSettings().setValue("audio/outputVolume",value);
+        updateVolumeTooltips();applyAudioDevices();
+    });
+    updateVolumeTooltips();
     refreshAudioCombos();
     auto *transferHandle = top->handle(1);
     transferHandle->setObjectName("transferHandle");
@@ -387,11 +445,52 @@ void MainWindow::refreshAudioCombos() {
     };
     fill(compositionAudio,compositionAudioId);
     fill(outputAudio,outputAudioId);
+    audioDevicesAvailable=!devices.isEmpty();
+    if(audioDevicesAvailable) {
+        compositionAudioMeter->setDeviceId(compositionAudioId);
+        outputAudioMeter->setDeviceId(outputAudioId);
+    } else {
+        compositionAudioMeter->setActive(false);
+        outputAudioMeter->setActive(false);
+        compositionAudioActive=false;
+        outputAudioActive=false;
+        compositionVuMeter->reset();
+        outputVuMeter->reset();
+    }
     updateAudioTooltips();
     applyAudioDevices();
 }
 void MainWindow::applyAudioDevices() {
-    for(auto *media:findChildren<Multimedia *>())media->setAudioDevices(compositionAudioId,outputAudioId);
+    for(auto *media:findChildren<Multimedia *>()) {
+        media->setAudioDevices(compositionAudioId,outputAudioId);
+        media->setAudioVolumes(compositionVolumeValue,outputVolumeValue);
+    }
+}
+void MainWindow::updateVolumeTooltips() {
+    if(compositionVolume)compositionVolume->setToolTip(QString("Volumen de composición (Cue): %1 %").arg(compositionVolumeValue));
+    if(outputVolume)outputVolume->setToolTip(QString("Volumen de salida (Play): %1 %").arg(outputVolumeValue));
+    if(compositionVolumeText)compositionVolumeText->setText(QString::number(compositionVolumeValue)+" %");
+    if(outputVolumeText)outputVolumeText->setText(QString::number(outputVolumeValue)+" %");
+}
+void MainWindow::updateAudioActivity() {
+    bool composition=false, output=false;
+    for(auto *media:findChildren<Multimedia *>()) {
+        if(!media || !media->isPlaying() || media->isStillImage() || media->isAudioMuted())continue;
+        if(media->isCue())composition=true;else output=true;
+        if(composition && output)break;
+    }
+    composition=composition && audioDevicesAvailable;
+    output=output && audioDevicesAvailable;
+    if(composition!=compositionAudioActive) {
+        compositionAudioActive=composition;
+        compositionAudioMeter->setActive(composition);
+        if(!composition)compositionVuMeter->reset();
+    }
+    if(output!=outputAudioActive) {
+        outputAudioActive=output;
+        outputAudioMeter->setActive(output);
+        if(!output)outputVuMeter->reset();
+    }
 }
 void MainWindow::updateAudioTooltips() {
     auto describe=[this](QComboBox *combo,const QString &role){
@@ -503,7 +602,7 @@ CanvasItem *MainWindow::prepareVideo(Multimedia *media,const QImage &frame) {
     return addItem(item,canvas->sceneRect().topLeft(),false);
 }
 Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file,const QString &id,bool loop) {
-    auto *media=new Multimedia;if(!id.isEmpty())media->id=id;media->setAudioDevices(compositionAudioId,outputAudioId);media->configure(name,file);if(loop)media->setLoop(true);bottom->addWidget(media);
+    auto *media=new Multimedia;if(!id.isEmpty())media->id=id;media->setAudioDevices(compositionAudioId,outputAudioId);media->setAudioVolumes(compositionVolumeValue,outputVolumeValue);media->configure(name,file);if(loop)media->setLoop(true);bottom->addWidget(media);
     auto selectPreview=[this,media]{
         previewMedia=media;
         for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && !item->mediaId.isEmpty())item->setVisible(item->mediaId==media->id && !media->currentFrame().isNull());

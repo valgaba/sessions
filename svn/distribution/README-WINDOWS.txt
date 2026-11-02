@@ -17,6 +17,7 @@ Next arranca esa acción cuando termina la anterior y Purge la elimina
 al terminar, sin borrar el archivo original. Cue de audio permite escucharlo.
 Countdown permite asociar textos para la cuenta y para el tiempo total.
 Los selectores Audio de Composición y Salida eligen el dispositivo de sonido.
+Cada cabecera incluye también volumen y vúmetro estéreo del dispositivo elegido.
 Opciones > Tiempo de fundido permite configurar la duración.
 
 Código fuente y compilación:

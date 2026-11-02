@@ -79,6 +79,26 @@ QComboBox QAbstractItemView {
     background: #252b39; color: #d4e1e4; border: 1px solid #535b6a;
     selection-background-color: #4e4d7a; selection-color: white; outline: 0;
 }
+QSlider#compositionVolume, QSlider#outputVolume { background: transparent; border: none; }
+QSlider#compositionVolume::groove:horizontal, QSlider#outputVolume::groove:horizontal {
+    border: 1px solid #686b74; height: 6px; background: transparent; border-radius: 3px;
+}
+QSlider#compositionVolume::sub-page:horizontal, QSlider#outputVolume::sub-page:horizontal {
+    background: #80a4ae; border-radius: 3px;
+}
+QSlider#compositionVolume::handle:horizontal, QSlider#outputVolume::handle:horizontal {
+    background: #80a4ae; width: 12px; margin: -4px 0; border: 1px solid #80a4ae; border-radius: 3px;
+}
+#topSplitter QLabel#compositionVolumeText, #topSplitter QLabel#outputVolumeText {
+    color: #8a8d96; padding: 0;
+}
+VuMeter { background: transparent; border: none; }
+VuMeter QLabel { background: transparent; border: none; padding: 0; color: #80a4ae; font-size: 9px; }
+#topSplitter VuMeter QLabel { background: transparent; border: none; padding: 0; color: #80a4ae; font-size: 9px; }
+VuMeter LevelMeter {
+    background-color: #181e2c; border: 1px solid #333b4f; border-radius: 0; padding: 0;
+    qproperty-barColor: #80A4AE; qproperty-peakColor: #dfdbd2;
+}
 #topSplitter QLabel { background: transparent; border: none; padding: 3px; }
 QStatusBar { background: #181e2c; }
 #Countdown { background: #181e2c; border: 1px solid #333b4f; }

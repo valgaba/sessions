@@ -7,6 +7,8 @@
 #include "multimedia.h"
 #include "aboutdialog.h"
 #include "fontloader.h"
+#include "audiometer.h"
+#include "slider.h"
 #include <QtWidgets>
 #include <QtTest/QTest>
 #include <cstdio>
@@ -31,6 +33,21 @@ int smokeTest(QApplication &app) {
             check(compositionAudio->isEnabled()==!devices.isEmpty() && outputAudio->isEnabled()==!devices.isEmpty(),"audio selectors enable only when output devices are available");
         }
         check(compositionAudio->toolTip().startsWith("Audio de composición") && outputAudio->toolTip().startsWith("Audio de salida"),"audio selectors describe their composition and output role");
+    }
+    auto *compositionVolume=w.findChild<QSlider *>("compositionVolume");
+    auto *outputVolume=w.findChild<QSlider *>("outputVolume");
+    auto *compositionVu=w.findChild<QWidget *>("compositionVuMeter");
+    auto *outputVu=w.findChild<QWidget *>("outputVuMeter");
+    check(compositionVolume && outputVolume && compositionVu && outputVu,"composition and output headers offer volume sliders and level meters");
+    check(compositionVolume && compositionVolume->toolTip().startsWith("Volumen de composición") && outputVolume->toolTip().startsWith("Volumen de salida"),"volume sliders describe their composition and output role");
+    auto *compositionVolumeText=w.findChild<QLabel *>("compositionVolumeText");
+    auto *outputVolumeText=w.findChild<QLabel *>("outputVolumeText");
+    check(compositionVolumeText && outputVolumeText && compositionVolumeText->text()==QString::number(compositionVolume->value())+" %" && outputVolumeText->text()==QString::number(outputVolume->value())+" %","volume sliders show their percentage");
+    auto *compositionMeter=w.findChild<AudioMeter *>("compositionAudioMeter");
+    auto *outputMeter=w.findChild<AudioMeter *>("outputAudioMeter");
+    if(Multimedia::backendAvailable() && compositionAudio && outputAudio) {
+        check(compositionMeter && outputMeter && compositionMeter->deviceId()==compositionAudio->currentData().toString() && outputMeter->deviceId()==outputAudio->currentData().toString(),"level meters follow the selected output devices");
+        check(compositionMeter && outputMeter && !compositionMeter->isActive() && !outputMeter->isActive(),"level meters stay idle until their context plays");
     }
     check(!QIcon(":/icons/Play.svg").pixmap(16,16).isNull() && !QIcon(":/icons/ActionCopy.svg").pixmap(16,16).isNull(),"original Radit SVG icons render through deployed icon engine");
     auto *aboutAction=w.findChild<QAction *>("aboutSessions");
@@ -573,6 +590,8 @@ int smokeTest(QApplication &app) {
     check(!media->loops() && !loopButton->isChecked(),"Loop toggle returns to its normal palette when disabled");
     QTest::mouseClick(media->findChild<QPushButton *>("multimediaPlay"),Qt::LeftButton);
     check(waitFor([&]{return media->isPlaying() && media->position()>150 && media->duration()>4000;}),"Multimedia plays audio and reports position and duration");
+    check(waitFor([&]{return outputMeter && outputMeter->isActive() && outputMeter->isMetering();}),"output level meter activates while Play audio is running");
+    check(compositionMeter && !compositionMeter->isActive(),"composition level meter stays idle during output playback");
     const auto audioOutputs=Multimedia::audioDevices();
     QString chosenOutput;
     for(const auto &device:audioOutputs)if(!device.id.isEmpty()){chosenOutput=device.id;break;}
@@ -580,6 +599,13 @@ int smokeTest(QApplication &app) {
         media->setAudioDevices(chosenOutput,chosenOutput);
         check(waitFor([&]{return media->currentAudioDevice()==chosenOutput;}),"a chosen audio output device is applied to playback");
         media->setAudioDevices(QString(),QString());
+        if(outputVolume && Multimedia::volumeControlAvailable()) {
+            const int previousVolume=outputVolume->value();
+            outputVolume->setValue(35);
+            check(waitFor([&]{return media->currentAudioVolume()==35;}),"output volume slider changes playback volume");
+            check(outputVolumeText && outputVolumeText->text()=="35 %","volume percentage follows the slider");
+            outputVolume->setValue(previousVolume);
+        }
         if(outputAudio && outputAudio->count()>1) {
             QSettings settings;
             const QVariant savedOutput=settings.value("audio/outputDevice");
@@ -589,8 +615,10 @@ int smokeTest(QApplication &app) {
             if(specificIndex>=0) {
                 const QString picked=outputAudio->itemData(specificIndex).toString();
                 outputAudio->setCurrentIndex(specificIndex);
+                check(outputMeter && outputMeter->deviceId()==picked,"level meter follows a device change immediately");
                 check(waitFor([&]{return media->currentAudioDevice()==picked;}),"choosing a device in the output selector applies it to playback");
                 outputAudio->setCurrentIndex(originalIndex);
+                check(outputMeter && outputMeter->deviceId()==outputAudio->currentData().toString(),"level meter follows the restored device");
                 if(savedOutput.isValid())settings.setValue("audio/outputDevice",savedOutput);else settings.remove("audio/outputDevice");
             }
         }

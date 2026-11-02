@@ -26,6 +26,9 @@ SOURCES += aboutdialog.cpp
 HEADERS += aboutdialog.h
 SOURCES += fontloader.cpp
 HEADERS += fontloader.h
+SOURCES += audiometer.cpp levelmeter.cpp vumeter.cpp
+HEADERS += audiometer.h levelmeter.h vumeter.h
+win32:LIBS += -lole32 -luuid
 RESOURCES += sessions.qrc
 DESTDIR = $$PWD/../out/bin
 # Keep intermediates and linker response files local to each build directory.

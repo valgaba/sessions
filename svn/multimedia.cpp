@@ -2,6 +2,7 @@
 #include <QtWidgets>
 #include "slider.h"
 #include <atomic>
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <cstdio>
@@ -74,8 +75,11 @@ struct VlcApi {
     void (*audioDeviceListRelease)(VlcAudioDevice *) = nullptr;
     char *(*audioDeviceGet)(void *) = nullptr;
     void (*freeMemory)(void *) = nullptr;
+    int (*audioSetVolume)(void *,int) = nullptr;
+    int (*audioGetVolume)(void *) = nullptr;
     bool ready = false;
     bool deviceSelectionAvailable() const { return ready && audioDeviceSet && audioDeviceEnum && audioDeviceListRelease; }
+    bool volumeAvailable() const { return ready && audioSetVolume && audioGetVolume; }
     template<class T> bool resolve(T &function,const char *symbol) {
         function = reinterpret_cast<T>(library.resolve(symbol)); return function != nullptr;
     }
@@ -106,6 +110,8 @@ struct VlcApi {
             resolve(audioDeviceListRelease,"libvlc_audio_output_device_list_release");
             resolve(audioDeviceGet,"libvlc_audio_output_device_get");
             resolve(freeMemory,"libvlc_free");
+            resolve(audioSetVolume,"libvlc_audio_set_volume");
+            resolve(audioGetVolume,"libvlc_audio_get_volume");
             return;
         }
     }
@@ -262,6 +268,27 @@ void Multimedia::applyAudioDevice(const QString &deviceId) {
     api.audioDeviceSet(playback->player,nullptr,deviceId.toUtf8().constData());
     appliedAudioDevice=deviceId;audioDeviceApplied=true;
 }
+bool Multimedia::volumeControlAvailable() { return vlc().volumeAvailable(); }
+int Multimedia::currentAudioVolume() const {
+    auto &api=vlc();
+    if(playback && playback->player && api.audioGetVolume) {
+        const int volume=api.audioGetVolume(playback->player);
+        if(volume>=0)return volume;
+    }
+    return appliedVolume<0?100:appliedVolume;
+}
+void Multimedia::setAudioVolumes(int composition,int output) {
+    compositionVolume=std::clamp(composition,0,100);
+    outputVolume=std::clamp(output,0,100);
+    if(playback && playback->player)applyAudioVolume(cueMode?compositionVolume:outputVolume);
+}
+void Multimedia::applyAudioVolume(int volume) {
+    auto &api=vlc();
+    if(!playback || !playback->player || !api.audioSetVolume)return;
+    if(audioVolumeApplied && appliedVolume==volume)return;
+    api.audioSetVolume(playback->player,volume);
+    appliedVolume=volume;audioVolumeApplied=true;
+}
 bool Multimedia::purges() const {return purgeButton->isChecked();}
 bool Multimedia::playsNext() const {return nextButton->isChecked();}
 bool Multimedia::mixes() const {return mixButton->isChecked();}
@@ -344,11 +371,13 @@ bool Multimedia::startPlayback() {
         api.setCallbacks(playback->player,VideoFrames::lock,VideoFrames::unlock,VideoFrames::display,frames.get());
         api.setFormat(playback->player,VideoFrames::format,nullptr);
         audioDeviceApplied=false;appliedAudioDevice.clear();
+        audioVolumeApplied=false;appliedVolume=-1;
     }
     const bool audioOnly=QStringList{"mp3","wav","flac","ogg","opus","aac","m4a","wma","aif","aiff"}.contains(QFileInfo(path).suffix().toLower());
     vlc().mute(playback->player,cueMode && !audioOnly?1:0);
     if(finished){vlc().stop(playback->player);finished=false;finishedTime=0;shownPosition=0;seeking=false;awaitingFreshFrame=true;slider->setValue(slider->minimum());updateTime(0,duration());}
     applyAudioDevice(cueMode?compositionAudioDevice:outputAudioDevice);
+    applyAudioVolume(cueMode?compositionVolume:outputVolume);
     acceptFrames=true;
     if(!isPlaying() && vlc().play(playback->player)<0){acceptFrames=false;status->setText("Error al reproducir");return false;}
     status->setText("Cargando…");playButton->setEnabled(cueMode);stopButton->setEnabled(true);poll.start();

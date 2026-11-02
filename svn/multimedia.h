@@ -49,8 +49,11 @@ public:
     static bool isImageFile(const QString &file);
     static bool backendAvailable();
     static QList<AudioOutputDevice> audioDevices();
+    static bool volumeControlAvailable();
     QString currentAudioDevice() const;
+    int currentAudioVolume() const;
     void setAudioDevices(const QString &composition, const QString &output);
+    void setAudioVolumes(int composition, int output);
 public slots:
     void play();
     void cue();
@@ -72,6 +75,7 @@ private:
     void stopPlayback(bool clearOutput);
     bool startPlayback();
     void applyAudioDevice(const QString &deviceId);
+    void applyAudioVolume(int volume);
     void restartForLoop();
     void receiveFrame();
     void updatePlayback();
@@ -83,6 +87,10 @@ private:
     QString outputAudioDevice;
     QString appliedAudioDevice;
     bool audioDeviceApplied = false;
+    int compositionVolume = 100;
+    int outputVolume = 100;
+    int appliedVolume = -1;
+    bool audioVolumeApplied = false;
     QLabel *title;
     QLabel *status;
     QLabel *time;

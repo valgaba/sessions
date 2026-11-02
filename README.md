@@ -89,6 +89,8 @@ Las cabeceras de **Composición** y **Salida** incluyen un selector **Audio** co
 
 La lista se actualiza al abrir el selector, por lo que los dispositivos USB o HDMI conectados con Sessions en marcha aparecen sin reiniciar. **Predeterminado** sigue el dispositivo elegido en Windows y la selección se conserva entre sesiones; pertenece a la aplicación y no se guarda en el diseño `.sessions`. Sin LibVLC 3, los selectores aparecen desactivados.
 
+Junto al selector, cada cabecera incluye un control de volumen con el mismo deslizador fino que el zoom de composición y un vúmetro estéreo horizontal con el estilo de Radit. El volumen se guarda por separado para composición y salida. El vúmetro mide el nivel real del dispositivo de salida seleccionado mediante WASAPI, por lo que refleja todo el audio que suene en ese dispositivo, no solo Sessions. Cada vúmetro se activa únicamente cuando su contexto está reproduciendo audio: el de composición con Cue y el de salida con Play. Si ambos contextos suenan a la vez en el mismo dispositivo, ambos muestran la mezcla de ese dispositivo.
+
 ## Compilar
 
 Abrir `svn/sessions.pro` en Qt Creator y seleccionar Desktop Qt 6.7.0 MinGW 64-bit, o ejecutar desde PowerShell:
