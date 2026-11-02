@@ -38,6 +38,11 @@ if (Test-Path -LiteralPath $fontSource) {
     New-Item -ItemType Directory -Path $fontStage -Force | Out-Null
     Copy-Item -Path (Join-Path $fontSource '*') -Destination $fontStage -Recurse -Force
 }
+# Ship the example design stored beside the built executable, when present.
+$defaultDesign = Join-Path $SourceBin 'default.sessions'
+if (Test-Path -LiteralPath $defaultDesign) {
+    Copy-Item -LiteralPath $defaultDesign -Destination $stage -Force
+}
 $vlc = Join-Path $stage 'vlc'
 New-Item -ItemType Directory -Path $vlc -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $VlcDirectory 'libvlc.dll'), (Join-Path $VlcDirectory 'libvlccore.dll') -Destination $vlc
