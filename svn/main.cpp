@@ -6,12 +6,23 @@
 #include <QFile>
 #include <QDir>
 #include <QIcon>
+#include <QSplashScreen>
+#include <QPixmap>
 int smokeTest(QApplication &app);
 int playbackTest(QApplication &app);
 int mediaLoadTest(QApplication &app);
 int main(int argc,char **argv){
     QApplication app(argc,argv);app.setApplicationName("Sessions");app.setOrganizationName("Sessions");
     app.setApplicationVersion("1.0.0");app.setWindowIcon(QIcon(":/icons/SessionsAppIcon.png"));
+    const bool testMode=app.arguments().contains("--smoke-test")||app.arguments().contains("--playback-test")||app.arguments().contains("--media-load-test");
+    // Show the splash before loading fonts and styles, which are the slowest
+    // part on low-end machines.
+    QSplashScreen splash(QPixmap(":/icons/splashscreen.png"));
+    if(!testMode){
+        splash.setCursor(Qt::WaitCursor);
+        splash.show();
+        QCoreApplication::processEvents();
+    }
     QString fontDirectory=QDir(app.applicationDirPath()).filePath("font");
     if(!QDir(fontDirectory).exists())fontDirectory=QDir(app.applicationDirPath()).filePath("fonts");
     FontLoader::load(fontDirectory);
@@ -37,5 +48,8 @@ int main(int argc,char **argv){
     if(app.arguments().contains("--smoke-test"))return smokeTest(app);
     if(app.arguments().contains("--playback-test"))return playbackTest(app);
     if(app.arguments().contains("--media-load-test"))return mediaLoadTest(app);
-    MainWindow window;window.show();return app.exec();
+    MainWindow window;
+    if(!testMode)splash.finish(&window);
+    window.show();
+    return app.exec();
 }

@@ -1,7 +1,17 @@
 #include "sourcepanel.h"
 #include <QtWidgets>
+#include <QHash>
+#include <QSet>
+#include <QUuid>
+#include <QTimer>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <algorithm>
+#include <functional>
 
 QIcon panelIcon(const QString &kind, bool active) {
+    if(kind=="group")return QIcon(":/icons/folder.svg");
     if(kind=="delete")return QIcon(":/icons/Remove.svg");
     QPixmap pixmap(20,20); pixmap.fill(Qt::transparent);
     QPainter p(&pixmap); p.setRenderHint(QPainter::Antialiasing);
@@ -32,13 +42,55 @@ QIcon panelIcon(const QString &kind, bool active) {
     return QIcon(pixmap);
 }
 
+namespace {
+bool isGroupRow(const QTreeWidgetItem *row) {
+    return row && row->data(0,Qt::UserRole+1).toString()=="group";
+}
+}
+
+class SourceTree : public QTreeWidget {
+public:
+    using QTreeWidget::QTreeWidget;
+    std::function<void(const QStringList &, const QString &)> dropItems;
+protected:
+    void startDrag(Qt::DropActions actions) override {
+        bool hasItems=false;
+        for(auto *row:selectedItems())if(!isGroupRow(row)){hasItems=true;break;}
+        if(hasItems)QTreeWidget::startDrag(actions);
+    }
+    void dragEnterEvent(QDragEnterEvent *event) override {
+        if(event->source()==this){QTreeWidget::dragEnterEvent(event);event->setDropAction(Qt::MoveAction);event->accept();}
+        else QTreeWidget::dragEnterEvent(event);
+    }
+    void dragMoveEvent(QDragMoveEvent *event) override {
+        if(event->source()!=this){event->ignore();return;}
+        QTreeWidget::dragMoveEvent(event);
+        event->setDropAction(Qt::MoveAction);
+        event->accept();
+    }
+    void dropEvent(QDropEvent *event) override {
+        if(event->source()!=this){event->ignore();return;}
+        QStringList ids;
+        for(auto *row:selectedItems())if(!isGroupRow(row))ids.append(row->data(0,Qt::UserRole).toString());
+        if(ids.isEmpty()){event->ignore();return;}
+        auto *row=itemAt(event->position().toPoint());
+        const QString groupId=row?(isGroupRow(row)?row->data(0,Qt::UserRole).toString():row->data(0,Qt::UserRole+2).toString()):QString();
+        event->setDropAction(Qt::MoveAction);
+        event->accept();
+        QTimer::singleShot(0,this,[this,ids,groupId]{if(dropItems)dropItems(ids,groupId);});
+    }
+};
+
 SourcePanel::SourcePanel(QGraphicsScene *value, QWidget *parent) : QWidget(parent), scene(value) {
     setObjectName("SourcesPanel"); setMinimumWidth(180);
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0,0,0,0); layout->setSpacing(0);
     auto *title = new QLabel("Fuentes"); title->setObjectName("SourcesTitle"); layout->addWidget(title);
-    list = new QTreeWidget; list->setObjectName("sourcesList"); list->setColumnCount(3);
-    list->setHeaderHidden(true); list->setRootIsDecorated(false); list->setIndentation(0);
-    list->setSelectionMode(QAbstractItemView::SingleSelection); list->setUniformRowHeights(true);
+    list = new SourceTree; list->setObjectName("sourcesList"); list->setColumnCount(3);
+    list->setHeaderHidden(true); list->setRootIsDecorated(true); list->setIndentation(16);
+    list->setSelectionMode(QAbstractItemView::ExtendedSelection); list->setUniformRowHeights(true);
+    list->setSelectionBehavior(QAbstractItemView::SelectRows);
+    list->setDragEnabled(true); list->setAcceptDrops(true); list->setDropIndicatorShown(true);
+    list->setDragDropMode(QAbstractItemView::DragDrop); list->setDefaultDropAction(Qt::MoveAction);
     list->header()->setStretchLastSection(false); list->header()->setSectionResizeMode(0,QHeaderView::Stretch);
     for (int column : {1,2}) { list->header()->setSectionResizeMode(column,QHeaderView::Fixed); list->setColumnWidth(column,28); }
     list->setContextMenuPolicy(Qt::CustomContextMenu); layout->addWidget(list,1);
@@ -51,10 +103,46 @@ SourcePanel::SourcePanel(QGraphicsScene *value, QWidget *parent) : QWidget(paren
         connect(action,&QAction::triggered,this,[this,pair]{emit addRequested(pair.second);});
     }
     addMenu->addMenu(shapesMenu);
-    connect(list,&QTreeWidget::currentItemChanged,this,[this]{selectCurrent();});
-    connect(list,&QTreeWidget::itemClicked,this,[this](QTreeWidgetItem *,int column){if(column==1)toggleVisibility();else if(column==2)toggleLock();else selectCurrent();});
-    connect(list,&QTreeWidget::itemDoubleClicked,this,[this](QTreeWidgetItem *,int column){if(column==0)if(auto *item=currentItem())emit propertiesRequested(item);});
+    connect(list,&QTreeWidget::itemSelectionChanged,this,[this]{selectCurrent();});
+    connect(list,&QTreeWidget::itemClicked,this,[this](QTreeWidgetItem *row,int column){
+        if(!row)return;
+        if(isGroupRow(row)) {
+            const QString id=row->data(0,Qt::UserRole).toString();
+            if(column==1)toggleGroupVisibility(id); else if(column==2)toggleGroupLock(id);
+            return;
+        }
+        if(column==1)toggleVisibility();else if(column==2)toggleLock();else selectCurrent();
+    });
+    connect(list,&QTreeWidget::itemDoubleClicked,this,[this](QTreeWidgetItem *row,int column){
+        if(column!=0||!row)return;
+        if(isGroupRow(row))renameGroup(row->data(0,Qt::UserRole).toString());
+        else if(auto *item=currentItem())emit propertiesRequested(item);
+    });
+    connect(list,&QTreeWidget::itemExpanded,this,[this](QTreeWidgetItem *row){
+        if(!isGroupRow(row))return;
+        const QString id=row->data(0,Qt::UserRole).toString();
+        for(auto &group:groupList)if(group.id==id)group.expanded=true;
+    });
+    connect(list,&QTreeWidget::itemCollapsed,this,[this](QTreeWidgetItem *row){
+        if(!isGroupRow(row))return;
+        const QString id=row->data(0,Qt::UserRole).toString();
+        for(auto &group:groupList)if(group.id==id)group.expanded=false;
+    });
     connect(list,&QWidget::customContextMenuRequested,this,&SourcePanel::showMenu);
+    static_cast<SourceTree *>(list)->dropItems=[this](const QStringList &ids,const QString &groupId) {
+        QSet<QString> groupIds;for(const auto &group:groupList)groupIds.insert(group.id);
+        const QString target=groupIds.contains(groupId)?groupId:QString();
+        bool changed=false;
+        for(const QString &id:ids) {
+            for(auto *base:scene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId.isEmpty() && item->id==id) {
+                if(item->groupId!=target){item->groupId=target;changed=true;}
+                break;
+            }
+        }
+        if(!changed)return;
+        if(!target.isEmpty())for(auto &group:groupList)if(group.id==target)group.expanded=true;
+        signature.clear();emit edited();synchronize();
+    };
     connect(scene,&QGraphicsScene::changed,this,[this]{synchronize();});
     connect(scene,&QGraphicsScene::selectionChanged,this,[this]{synchronize();});
     auto *removeKey = new QShortcut(QKeySequence::Delete,list); removeKey->setContext(Qt::WidgetWithChildrenShortcut);
@@ -66,37 +154,118 @@ SourcePanel::SourcePanel(QGraphicsScene *value, QWidget *parent) : QWidget(paren
     synchronize();
 }
 CanvasItem *SourcePanel::currentItem() const {
-    if (!list->currentItem()) return nullptr;
+    if (!list->currentItem() || isGroupRow(list->currentItem())) return nullptr;
     const QString id = list->currentItem()->data(0,Qt::UserRole).toString();
     for(auto *base:scene->items()) if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->id==id)return item;
     return nullptr;
 }
+QString SourcePanel::currentGroupId() const {
+    if (!list->currentItem()) return QString();
+    if (isGroupRow(list->currentItem())) return list->currentItem()->data(0,Qt::UserRole).toString();
+    if (auto *item=currentItem())
+        for(const auto &group:groupList)if(group.id==item->groupId)return group.id;
+    return QString();
+}
+QString SourcePanel::activeGroupId() const { return currentGroupId(); }
+QList<CanvasItem *> SourcePanel::groupItems(const QString &groupId) const {
+    QList<CanvasItem *> items;
+    if(groupId.isEmpty())return items;
+    for(auto *base:scene->items(Qt::DescendingOrder))if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId.isEmpty() && item->groupId==groupId)items.append(item);
+    return items;
+}
+QTreeWidgetItem *SourcePanel::groupRow(const QString &groupId) const {
+    for(int i=0;i<list->topLevelItemCount();++i)if(isGroupRow(list->topLevelItem(i)) && list->topLevelItem(i)->data(0,Qt::UserRole).toString()==groupId)return list->topLevelItem(i);
+    return nullptr;
+}
+void SourcePanel::setGroups(const QList<SourceGroup> &groups) {
+    groupList.clear();
+    QSet<QString> ids;
+    for(const auto &group:groups) {
+        const QString name=group.name.trimmed();
+        if(group.id.isEmpty() || name.isEmpty() || ids.contains(group.id))continue;
+        ids.insert(group.id);
+        groupList.append({group.id,name,group.expanded});
+    }
+    signature.clear();
+    synchronize();
+}
 void SourcePanel::synchronize() {
     QList<CanvasItem *> items; QStringList next;
-    QString selectedId;
+    QString selectedId; int selectedCount=0;
     for(auto *base:scene->items(Qt::DescendingOrder)) if(auto *item=dynamic_cast<CanvasItem *>(base)) {
         if(!item->mediaId.isEmpty())continue;
         items.append(item);
-        next << item->id << item->name << item->typeName() << QString::number(item->isVisible()) << QString::number(item->isLocked());
-        if(item->isSelected())selectedId=item->id;
+        next << item->id << item->name << item->typeName() << QString::number(item->isVisible()) << QString::number(item->isLocked()) << item->groupId;
+        if(item->isSelected()){selectedId=item->id;++selectedCount;}
     }
+    for(const auto &group:groupList)next << QStringLiteral("@group") << group.id << group.name;
     QSignalBlocker blocker(list);
-    QString currentId = list->currentItem() ? list->currentItem()->data(0,Qt::UserRole).toString() : QString();
+    QTreeWidgetItem *current=list->currentItem();
+    QString currentId=current?current->data(0,Qt::UserRole).toString():QString();
+    if(isGroupRow(current))currentId="group:"+currentId;
     if(!selectedId.isEmpty())currentId=selectedId;
+    std::function<QTreeWidgetItem *(QTreeWidgetItem *)> findRow=[&](QTreeWidgetItem *parent)->QTreeWidgetItem *{
+        const int count=parent?parent->childCount():list->topLevelItemCount();
+        for(int i=0;i<count;++i) {
+            auto *row=parent?parent->child(i):list->topLevelItem(i);
+            if(row->data(0,Qt::UserRole).toString()==currentId)return row;
+            if(auto *found=findRow(row))return found;
+        }
+        return nullptr;
+    };
     if(next!=signature) {
-        signature=next; list->clear();
+        signature=next;
+        QHash<QString,bool> expanded;
+        for(int i=0;i<list->topLevelItemCount();++i)if(isGroupRow(list->topLevelItem(i)))expanded.insert(list->topLevelItem(i)->data(0,Qt::UserRole).toString(),list->topLevelItem(i)->isExpanded());
+        for(auto &group:groupList)if(expanded.contains(group.id))group.expanded=expanded.value(group.id);
+        list->clear();
+        QSet<QString> groupIds;
+        for(const auto &group:groupList)groupIds.insert(group.id);
+        QHash<QString,QList<CanvasItem *>> grouped;
+        QList<CanvasItem *> ungrouped;
         for(auto *item:items) {
-            auto *row=new QTreeWidgetItem(list); row->setText(0,item->name); row->setData(0,Qt::UserRole,item->id);
+            if(groupIds.contains(item->groupId))grouped[item->groupId].append(item);
+            else ungrouped.append(item);
+        }
+        const auto addItemRow=[this](QTreeWidgetItem *parent,CanvasItem *item) {
+            auto *row=parent?new QTreeWidgetItem(parent):new QTreeWidgetItem(list);
+            row->setText(0,item->name); row->setData(0,Qt::UserRole,item->id); row->setData(0,Qt::UserRole+1,"item"); row->setData(0,Qt::UserRole+2,item->groupId);
+            row->setFlags(row->flags() | Qt::ItemIsDragEnabled);
             row->setIcon(0,panelIcon(item->typeName())); row->setIcon(1,panelIcon("eye",item->isVisible())); row->setIcon(2,panelIcon("lock",item->isLocked()));
             row->setToolTip(0,item->name); row->setToolTip(1,item->isVisible()?"Ocultar":"Mostrar"); row->setToolTip(2,item->isLocked()?"Desbloquear":"Bloquear");
             row->setSizeHint(0,QSize(0,30));
+        };
+        for(const auto &group:groupList) {
+            const auto children=grouped.value(group.id);
+            auto *row=new QTreeWidgetItem(list);
+            row->setText(0,group.name); row->setData(0,Qt::UserRole,group.id); row->setData(0,Qt::UserRole+1,"group");
+            row->setFlags((row->flags() | Qt::ItemIsDropEnabled) & ~Qt::ItemIsDragEnabled);
+            row->setIcon(0,panelIcon("group")); row->setSizeHint(0,QSize(0,30));
+            row->setToolTip(0,group.name);
+            bool allVisible=true, allLocked=!children.isEmpty();
+            for(auto *item:children){allVisible=allVisible && item->isVisible();allLocked=allLocked && item->isLocked();}
+            row->setIcon(1,panelIcon("eye",allVisible)); row->setIcon(2,panelIcon("lock",allLocked));
+            row->setToolTip(1,allVisible?"Ocultar grupo":"Mostrar grupo"); row->setToolTip(2,allLocked?"Desbloquear grupo":"Bloquear grupo");
+            for(auto *item:children)addItemRow(row,item);
+            row->setExpanded(group.expanded);
         }
+        for(auto *item:ungrouped)addItemRow(nullptr,item);
+        if(currentId.startsWith("group:")) {
+            auto *row=groupRow(currentId.mid(6));
+            if(row)list->setCurrentItem(row);
+        } else if(auto *row=findRow(nullptr))list->setCurrentItem(row);
+    } else if(selectedCount==1) {
+        if(auto *row=findRow(nullptr))list->setCurrentItem(row);
     }
-    for(int i=0;i<list->topLevelItemCount();++i)if(list->topLevelItem(i)->data(0,Qt::UserRole).toString()==currentId)list->setCurrentItem(list->topLevelItem(i));
 }
 void SourcePanel::selectCurrent() {
-    auto *item=currentItem();
-    { QSignalBlocker blocker(scene); scene->clearSelection(); if(item && item->isVisible())item->setSelected(true); }
+    { QSignalBlocker blocker(scene); scene->clearSelection();
+      for(auto *row:list->selectedItems()) {
+          if(isGroupRow(row))continue;
+          const QString id=row->data(0,Qt::UserRole).toString();
+          for(auto *base:scene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->id==id && item->isVisible()){item->setSelected(true);break;}
+      }
+    }
     synchronize();
 }
 void SourcePanel::toggleVisibility() { if(auto *item=currentItem()){item->setVisible(!item->isVisible());emit edited();synchronize();} }
@@ -104,17 +273,92 @@ void SourcePanel::toggleLock() { if(auto *item=currentItem()){item->setLocked(!i
 void SourcePanel::removeCurrent() { if(auto *item=currentItem()){delete item;emit edited();synchronize();} }
 void SourcePanel::moveCurrent(int direction) {
     auto *item=currentItem(); if(!item)return;
-    QList<CanvasItem *> items; for(auto *base:scene->items(Qt::DescendingOrder))if(auto *source=dynamic_cast<CanvasItem *>(base))items.append(source);
-    int from=items.indexOf(item),to=from+direction; if(to<0 || to>=items.size())return;
-    items.swapItemsAt(from,to); for(int i=0;i<items.size();++i)items[i]->setZValue(items.size()-i);
+    QList<CanvasItem *> siblings;
+    for(auto *base:scene->items(Qt::DescendingOrder))if(auto *source=dynamic_cast<CanvasItem *>(base);source && source->mediaId.isEmpty() && source->groupId==item->groupId)siblings.append(source);
+    const int from=siblings.indexOf(item),to=from+direction;
+    if(from<0 || to<0 || to>=siblings.size())return;
+    const qreal z=siblings[from]->zValue();
+    siblings[from]->setZValue(siblings[to]->zValue()); siblings[to]->setZValue(z);
     emit edited();synchronize();
+}
+QString SourcePanel::suggestedGroupName() const {
+    QSet<QString> names;
+    for(const auto &group:groupList)names.insert(group.name.toCaseFolded());
+    if(!names.contains(QStringLiteral("grupo").toCaseFolded()))return QStringLiteral("Grupo");
+    int number=2;
+    while(names.contains((QStringLiteral("Grupo ")+QString::number(number)).toCaseFolded()))++number;
+    return QStringLiteral("Grupo ")+QString::number(number);
+}
+void SourcePanel::addGroup() {
+    bool ok;
+    const QString name=QInputDialog::getText(this,"Nuevo grupo","Nombre del grupo:",QLineEdit::Normal,suggestedGroupName(),&ok).trimmed();
+    if(!ok || name.isEmpty())return;
+    groupList.append({QUuid::createUuid().toString(QUuid::WithoutBraces),name,true});
+    signature.clear(); emit edited(); synchronize();
+    if(auto *row=groupRow(groupList.last().id))list->setCurrentItem(row);
+}
+void SourcePanel::renameGroup(const QString &groupId) {
+    auto it=std::find_if(groupList.begin(),groupList.end(),[&](const SourceGroup &group){return group.id==groupId;});
+    if(it==groupList.end())return;
+    bool ok;
+    const QString name=QInputDialog::getText(this,"Renombrar grupo","Nombre del grupo:",QLineEdit::Normal,it->name,&ok).trimmed();
+    if(!ok || name.isEmpty() || name==it->name)return;
+    it->name=name; signature.clear(); emit edited(); synchronize();
+}
+void SourcePanel::removeGroup(const QString &groupId) {
+    for(auto *base:scene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->groupId==groupId)item->groupId.clear();
+    groupList.erase(std::remove_if(groupList.begin(),groupList.end(),[&](const SourceGroup &group){return group.id==groupId;}),groupList.end());
+    signature.clear(); emit edited(); synchronize();
+}
+void SourcePanel::toggleGroupVisibility(const QString &groupId) {
+    const auto items=groupItems(groupId);
+    if(items.isEmpty())return;
+    bool allVisible=true;for(auto *item:items)allVisible=allVisible && item->isVisible();
+    for(auto *item:items)item->setVisible(!allVisible);
+    emit edited(); synchronize();
+}
+void SourcePanel::toggleGroupLock(const QString &groupId) {
+    const auto items=groupItems(groupId);
+    if(items.isEmpty())return;
+    bool allLocked=true;for(auto *item:items)allLocked=allLocked && item->isLocked();
+    for(auto *item:items)item->setLocked(!allLocked);
+    emit edited(); synchronize();
+}
+void SourcePanel::moveItemToGroup(CanvasItem *item,const QString &groupId) {
+    if(!item || item->groupId==groupId)return;
+    QSet<QString> ids;for(const auto &group:groupList)ids.insert(group.id);
+    item->groupId=ids.contains(groupId)?groupId:QString();
+    signature.clear(); emit edited(); synchronize();
 }
 void SourcePanel::showMenu(QPoint position) {
     if(auto *row=list->itemAt(position))list->setCurrentItem(row);
-    auto *item=currentItem();
     QMenu menu(this);
     menu.addMenu(addMenu);
+    auto *groupAction=menu.addAction(panelIcon("group"),"Añadir grupo…");
+    groupAction->setObjectName("sourceAddGroup");
+    connect(groupAction,&QAction::triggered,this,&SourcePanel::addGroup);
     menu.addSeparator();
+    auto *currentRow=list->currentItem();
+    if(currentRow && isGroupRow(currentRow)) {
+        const QString groupId=currentRow->data(0,Qt::UserRole).toString();
+        auto *rename=menu.addAction("Renombrar grupo…");rename->setObjectName("sourceRenameGroup");
+        connect(rename,&QAction::triggered,this,[this,groupId]{renameGroup(groupId);});
+        auto *remove=menu.addAction(QIcon(":/icons/Remove.svg"),"Eliminar grupo");remove->setObjectName("sourceDeleteGroup");
+        connect(remove,&QAction::triggered,this,[this,groupId]{removeGroup(groupId);});
+        menu.addSeparator();
+        const auto items=groupItems(groupId);
+        bool allVisible=true, allLocked=!items.isEmpty();
+        for(auto *item:items){allVisible=allVisible && item->isVisible();allLocked=allLocked && item->isLocked();}
+        auto *visible=menu.addAction(allVisible?"Ocultar grupo":"Mostrar grupo");
+        visible->setObjectName("sourceGroupVisibility"); visible->setEnabled(!items.isEmpty());
+        connect(visible,&QAction::triggered,this,[this,groupId]{toggleGroupVisibility(groupId);});
+        auto *lock=menu.addAction(allLocked?"Desbloquear grupo":"Bloquear grupo");
+        lock->setObjectName("sourceGroupLock"); lock->setEnabled(!items.isEmpty());
+        connect(lock,&QAction::triggered,this,[this,groupId]{toggleGroupLock(groupId);});
+        menu.exec(list->viewport()->mapToGlobal(position));
+        return;
+    }
+    auto *item=currentItem();
     emit clipboardMenuRequested(&menu,item);
     if (!item) { menu.exec(list->viewport()->mapToGlobal(position)); return; }
     menu.addSeparator();
@@ -122,9 +366,18 @@ void SourcePanel::showMenu(QPoint position) {
     auto *lock=menu.addAction(item->isLocked()?"Desbloquear":"Bloquear");lock->setObjectName("sourceLock");connect(lock,&QAction::triggered,this,&SourcePanel::toggleLock);
     auto *remove=menu.addAction(QIcon(":/icons/Remove.svg"),"Eliminar");remove->setObjectName("sourceDelete");connect(remove,&QAction::triggered,this,&SourcePanel::removeCurrent);
     menu.addSeparator();
-    int index=list->indexOfTopLevelItem(list->currentItem());
+    QList<CanvasItem *> siblings;
+    for(auto *base:scene->items(Qt::DescendingOrder))if(auto *source=dynamic_cast<CanvasItem *>(base);source && source->mediaId.isEmpty() && source->groupId==item->groupId)siblings.append(source);
+    const int index=siblings.indexOf(item);
     auto *up=menu.addAction("Subir");up->setObjectName("sourceUp");up->setEnabled(index>0);connect(up,&QAction::triggered,this,[this]{moveCurrent(-1);});
-    auto *down=menu.addAction("Bajar");down->setObjectName("sourceDown");down->setEnabled(index+1<list->topLevelItemCount());connect(down,&QAction::triggered,this,[this]{moveCurrent(1);});
+    auto *down=menu.addAction("Bajar");down->setObjectName("sourceDown");down->setEnabled(index+1<siblings.size());connect(down,&QAction::triggered,this,[this]{moveCurrent(1);});
+    auto *move=menu.addMenu("Mover a grupo");
+    auto *none=move->addAction("Sin grupo");none->setCheckable(true);none->setChecked(item->groupId.isEmpty());
+    connect(none,&QAction::triggered,this,[this,item]{moveItemToGroup(item,QString());});
+    for(const auto &group:groupList) {
+        auto *action=move->addAction(group.name);action->setCheckable(true);action->setChecked(item->groupId==group.id);
+        connect(action,&QAction::triggered,this,[this,item,id=group.id]{moveItemToGroup(item,id);});
+    }
     menu.addSeparator();auto *properties=menu.addAction(QIcon(":/icons/settings.svg"),"Propiedades…");properties->setObjectName("sourceProperties");connect(properties,&QAction::triggered,this,[this]{if(auto *source=currentItem())emit propertiesRequested(source);});
     menu.exec(list->viewport()->mapToGlobal(position));
 }

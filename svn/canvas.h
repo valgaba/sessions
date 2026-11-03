@@ -36,6 +36,7 @@ public:
     QString name;
     QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString mediaId;
+    QString groupId;
     QImage image;
     QColor color = Qt::white;
     QFont font = QFont("Arial", 32);

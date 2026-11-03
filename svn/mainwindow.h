@@ -28,7 +28,7 @@ public:
     QGraphicsScene *outputScene;
     OutputView *outputPreview;
     OutputView *externalOutput;
-    CanvasItem *addItem(CanvasItem *item, QPointF pos, bool markChanged = true);
+    CanvasItem *addItem(CanvasItem *item, QPointF pos, bool markChanged = true, bool assignGroup = true);
     bool writeProject(const QString &path);
     bool readProject(const QString &path);
     void removeSelection();
@@ -78,6 +78,7 @@ private:
     bool save(bool saveAs = false);
     bool canDiscard();
     QString filename;
+    QString saveError;
     bool dirty = false;
     QPointer<QScreen> outputScreen;
     WidgetContainer *bottom;

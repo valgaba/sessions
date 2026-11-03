@@ -1,16 +1,29 @@
 #pragma once
 #include <QWidget>
 #include <QIcon>
+#include <QList>
+#include <QString>
+#include <QStringList>
 #include "canvas.h"
 class QTreeWidget;
+class QTreeWidgetItem;
 class QMenu;
 QIcon panelIcon(const QString &kind, bool active = true);
+
+struct SourceGroup {
+    QString id;
+    QString name;
+    bool expanded = true;
+};
 
 class SourcePanel : public QWidget {
     Q_OBJECT
 public:
     explicit SourcePanel(QGraphicsScene *scene, QWidget *parent = nullptr);
     void synchronize();
+    QList<SourceGroup> groups() const { return groupList; }
+    void setGroups(const QList<SourceGroup> &groups);
+    QString activeGroupId() const;
 signals:
     void edited();
     void propertiesRequested(CanvasItem *item);
@@ -20,14 +33,25 @@ signals:
     void pasteRequested();
 private:
     CanvasItem *currentItem() const;
+    QString currentGroupId() const;
+    QList<CanvasItem *> groupItems(const QString &groupId) const;
+    QTreeWidgetItem *groupRow(const QString &groupId) const;
     void selectCurrent();
     void toggleVisibility();
     void toggleLock();
     void removeCurrent();
     void moveCurrent(int direction);
+    void addGroup();
+    void renameGroup(const QString &groupId);
+    void removeGroup(const QString &groupId);
+    void toggleGroupVisibility(const QString &groupId);
+    void toggleGroupLock(const QString &groupId);
+    void moveItemToGroup(CanvasItem *item, const QString &groupId);
+    QString suggestedGroupName() const;
     void showMenu(QPoint position);
     QGraphicsScene *scene;
     QTreeWidget *list;
     QMenu *addMenu;
     QStringList signature;
+    QList<SourceGroup> groupList;
 };

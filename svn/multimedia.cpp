@@ -6,6 +6,16 @@
 #include <cstring>
 #include <functional>
 #include <cstdio>
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <objbase.h>
+#include <mmdeviceapi.h>
+#include <propsys.h>
+#include <propidl.h>
+#endif
 
 struct VideoFrames {
     QMutex mutex;
@@ -233,6 +243,42 @@ void Multimedia::updateThumbnail(const QImage &image) {
 bool Multimedia::backendAvailable(){return vlc().ready;}
 QList<AudioOutputDevice> Multimedia::audioDevices() {
     QList<AudioOutputDevice> devices;
+#ifdef Q_OS_WIN
+    // Enumerate with WASAPI so opening the application does not load LibVLC
+    // just to fill the device combos. VLC's mmdevice backend uses the same
+    // endpoint identifiers.
+    const HRESULT com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+    IMMDeviceEnumerator *deviceEnumerator=nullptr;
+    if(SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_ALL,IID_PPV_ARGS(&deviceEnumerator)))) {
+        devices.append({QString(),QStringLiteral("Predeterminado")});
+        IMMDeviceCollection *collection=nullptr;
+        if(SUCCEEDED(deviceEnumerator->EnumAudioEndpoints(eRender,DEVICE_STATE_ACTIVE,&collection)) && collection) {
+            static const PROPERTYKEY friendlyName={{0xa45c254e,0xdf1c,0x4efd,{0x80,0x20,0x67,0xd1,0x46,0xa8,0x50,0xe0}},14};
+            UINT count=0;collection->GetCount(&count);
+            for(UINT i=0;i<count;++i) {
+                IMMDevice *device=nullptr;
+                if(FAILED(collection->Item(i,&device))||!device)continue;
+                LPWSTR rawId=nullptr;QString id;
+                if(SUCCEEDED(device->GetId(&rawId)) && rawId){id=QString::fromWCharArray(rawId);CoTaskMemFree(rawId);}
+                QString name;
+                IPropertyStore *store=nullptr;
+                if(SUCCEEDED(device->OpenPropertyStore(STGM_READ,&store)) && store) {
+                    PROPVARIANT value;PropVariantInit(&value);
+                    if(SUCCEEDED(store->GetValue(friendlyName,&value)) && value.vt==VT_LPWSTR)
+                        name=QString::fromWCharArray(value.pwszVal);
+                    PropVariantClear(&value);store->Release();
+                }
+                if(name.isEmpty())name=id;
+                if(!id.isEmpty())devices.append({id,name});
+                device->Release();
+            }
+            collection->Release();
+        }
+        deviceEnumerator->Release();
+    }
+    if(SUCCEEDED(com))CoUninitialize();
+    if(!devices.isEmpty())return devices;
+#endif
     auto &api=vlc();
     if(!api.deviceSelectionAvailable())return devices;
     // Enumeration needs a media player; a short-lived one keeps the list

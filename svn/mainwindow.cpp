@@ -16,6 +16,7 @@
 #include <QSaveFile>
 #include <QScreen>
 #include <QWindow>
+#include <QStandardPaths>
 #include <functional>
 #include <cmath>
 
@@ -599,7 +600,7 @@ CanvasItem *MainWindow::prepareVideo(Multimedia *media,const QImage &frame) {
     auto *item=new CanvasItem(frame);item->mediaId=media->id;item->name=media->name();item->setItemSize(canvas->sceneRect().size());
     qreal lowest=0;for(auto *base:canvas->items())lowest=qMin(lowest,base->zValue());item->setZValue(lowest-1);
     item->setVisible(previewMedia==media);
-    return addItem(item,canvas->sceneRect().topLeft(),false);
+    return addItem(item,canvas->sceneRect().topLeft(),false,false);
 }
 Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file,const QString &id,bool loop) {
     auto *media=new Multimedia;if(!id.isEmpty())media->id=id;media->setAudioDevices(compositionAudioId,outputAudioId);media->setAudioVolumes(compositionVolumeValue,outputVolumeValue);media->configure(name,file);if(loop)media->setLoop(true);bottom->addWidget(media);
@@ -671,7 +672,8 @@ QString MainWindow::suggestedElementName(const QString &base) const {
     int number=1;while(names.contains((base+QString::number(number)).toCaseFolded()))++number;
     return base+QString::number(number);
 }
-CanvasItem *MainWindow::addItem(CanvasItem *item,QPointF pos,bool markChanged){
+CanvasItem *MainWindow::addItem(CanvasItem *item,QPointF pos,bool markChanged,bool assignGroup){
+    if(assignGroup && markChanged && item->groupId.isEmpty() && sources)item->groupId=sources->activeGroupId();
     canvas->clearSelection(); canvas->addItem(item);item->setPos(pos);
     connect(item,&CanvasItem::edited,this,&MainWindow::changed);
     connect(item,&CanvasItem::editRequested,this,&MainWindow::editText);
@@ -684,7 +686,7 @@ CanvasItem *clipboardClone(const CanvasItem *source,bool preserveId) {
     if(preserveId)copy->id=source->id;
     copy->name=source->name;copy->color=source->color;copy->setTextFont(source->font);
     copy->setItemSize(source->itemSize());copy->setPos(source->pos());copy->setZValue(source->zValue());
-    copy->setVisible(source->isVisible());copy->setLocked(source->isLocked());return copy;
+    copy->setVisible(source->isVisible());copy->setLocked(source->isLocked());copy->groupId=source->groupId;return copy;
 }
 }
 QList<CanvasItem *> MainWindow::selectedCanvasItems() const {
@@ -741,12 +743,13 @@ void MainWindow::editText(CanvasItem *item) {
     if (dialog.exec() == QDialog::Accepted) changed();
 }
 bool MainWindow::writeProject(const QString &path){
+    saveError.clear();
     QJsonArray items;
     for(auto *base:canvas->items(Qt::AscendingOrder))if(auto *item=dynamic_cast<CanvasItem *>(base)){
         QJsonObject o{{"id",item->id},{"name",item->name},{"x",item->x()},{"y",item->y()},{"w",item->itemSize().width()},{"h",item->itemSize().height()},{"z",item->zValue()},
                       {"text",item->text},{"font",item->font.toString()},{"color",item->color.name()},{"type",item->typeName()},
-                      {"visible",item->isVisible()},{"locked",item->isLocked()},{"mediaId",item->mediaId}};
-        if(item->isImage()){QByteArray bytes;QBuffer buffer(&bytes);buffer.open(QIODevice::WriteOnly);if(!item->image.save(&buffer,"PNG"))return false;o["data"]=QString::fromLatin1(bytes.toBase64());}
+                      {"visible",item->isVisible()},{"locked",item->isLocked()},{"mediaId",item->mediaId},{"group",item->groupId}};
+        if(item->isImage()){QByteArray bytes;QBuffer buffer(&bytes);buffer.open(QIODevice::WriteOnly);if(!item->image.save(&buffer,"PNG")){saveError=QStringLiteral("No se pudo codificar una imagen del diseño.");return false;}o["data"]=QString::fromLatin1(bytes.toBase64());}
         items.append(o);
     }
     QJsonArray widgets;
@@ -758,15 +761,34 @@ bool MainWindow::writeProject(const QString &path){
                 {"textId", countdown->associatedText() ? countdown->associatedText()->id : QString()},{"format",countdown->outputFormat()},
                 {"totalTextId",countdown->totalText()?countdown->totalText()->id:QString()}});
         }
-    QSaveFile file(path);if(!file.open(QIODevice::WriteOnly))return false;
-    auto bytes=QJsonDocument(QJsonObject{{"format","sessions"},{"version",1},{"items",items},{"widgets",widgets}}).toJson();
-    if(file.write(bytes)!=bytes.size() || !file.commit())return false;
+    QSaveFile file(path);if(!file.open(QIODevice::WriteOnly)){saveError=file.errorString();return false;}
+    QJsonArray groups;
+    for(const auto &group:sources->groups())groups.append(QJsonObject{{"id",group.id},{"name",group.name},{"expanded",group.expanded}});
+    QJsonObject root{{"format","sessions"},{"version",1},{"items",items},{"widgets",widgets}};
+    if(!groups.isEmpty())root["groups"]=groups;
+    auto bytes=QJsonDocument(root).toJson();
+    if(file.write(bytes)!=bytes.size()){saveError=file.errorString();return false;}
+    if(!file.commit()){saveError=file.errorString();return false;}
     filename=path;dirty=false;setWindowModified(false);setWindowTitle("Sessions — "+QFileInfo(path).fileName()+"[*]");return true;
 }
 bool MainWindow::readProject(const QString &path){
     QFile file(path);if(!file.open(QIODevice::ReadOnly) || file.size()>128*1024*1024)return false;
     QJsonParseError error;auto doc=QJsonDocument::fromJson(file.readAll(),&error);auto root=doc.object();
     if(error.error!=QJsonParseError::NoError || root["format"]!="sessions" || root["version"].toInt()!=1 || !root["items"].isArray())return false;
+    QList<SourceGroup> loadedGroups;
+    if(root.contains("groups")) {
+        if(!root["groups"].isArray())return false;
+        QSet<QString> groupIds;
+        for(auto value:root["groups"].toArray()) {
+            auto group=value.toObject();
+            if(!group["id"].isString() || group["id"].toString().isEmpty())return false;
+            if(!group["name"].isString() || group["name"].toString().trimmed().isEmpty())return false;
+            if(group.contains("expanded") && !group["expanded"].isBool())return false;
+            if(groupIds.contains(group["id"].toString()))return false;
+            groupIds.insert(group["id"].toString());
+            loadedGroups.append({group["id"].toString(),group["name"].toString().trimmed(),group.value("expanded").toBool(true)});
+        }
+    }
     QJsonArray countdownData;
     if (root.contains("widgets")) {
         if (!root["widgets"].isArray()) return false;
@@ -805,6 +827,8 @@ bool MainWindow::readProject(const QString &path){
         pending.append(item);item->setPos(o["x"].toDouble(),o["y"].toDouble());item->setItemSize({o["w"].toDouble(),o["h"].toDouble()});item->setZValue(o["z"].toDouble());
         if(o.contains("mediaId") && !o["mediaId"].isString())return fail();
         item->mediaId=o["mediaId"].toString();
+        if(o.contains("group") && !o["group"].isString())return fail();
+        item->groupId=o["group"].toString();
         for (auto key : {"visible","locked"}) if(o.contains(key) && !o[key].isBool())return fail();
         item->setVisible(item->mediaId.isEmpty() && o["visible"].toBool(true)); item->setLocked(o["locked"].toBool(false));
         if (o.contains("name")) {
@@ -830,7 +854,8 @@ bool MainWindow::readProject(const QString &path){
         }
     }
     for (auto *container : countdownContainers) container->clearWidgets();
-    canvas->clear();for(auto *item:pending)addItem(item,item->pos());canvas->clearSelection();
+    canvas->clear();for(auto *item:pending)addItem(item,item->pos(),false,false);canvas->clearSelection();
+    sources->setGroups(loadedGroups);
     for (auto value : countdownData) {
         auto widget = value.toObject();
         if(widget["type"]=="multimedia") {
@@ -842,11 +867,20 @@ bool MainWindow::readProject(const QString &path){
     filename=path;dirty=false;setWindowModified(false);setWindowTitle("Sessions — "+QFileInfo(path).fileName()+"[*]");refresh();return true;
 }
 bool MainWindow::save(bool saveAs){
-    QString path=filename;if(saveAs || path.isEmpty())path=QFileDialog::getSaveFileName(this,"Guardar diseño",filename,"Diseño Sessions (*.sessions)");
+    QString path=filename;
+    if(saveAs || path.isEmpty()) {
+        QString start=filename;
+        if(start.isEmpty()) {
+            start=QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+            if(start.isEmpty())start=QDir::homePath();
+        }
+        path=QFileDialog::getSaveFileName(this,"Guardar diseño",start,"Diseño Sessions (*.sessions)");
+    }
     if(path.isEmpty())return false;
     if(!path.endsWith(".sessions",Qt::CaseInsensitive))path+=".sessions";
     if(writeProject(path))return true;
-    QMessageBox::warning(this,"Guardar","No se ha podido guardar el diseño.");return false;
+    const QString detail=saveError.isEmpty()?QStringLiteral("Comprueba los permisos de la carpeta."):saveError;
+    QMessageBox::warning(this,"Guardar",QString("No se ha podido guardar el diseño en:\n%1\n\n%2").arg(QDir::toNativeSeparators(path),detail));return false;
 }
 bool MainWindow::canDiscard(){
     if(!dirty)return true;
