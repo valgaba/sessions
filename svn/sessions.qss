@@ -54,7 +54,7 @@ QSlider#multimediaSlider::handle:horizontal {
 #sourcesList::branch:has-children:closed { image: url(:/icons/branch-closed.svg); }
 #sourcesList::branch:has-children:open { image: url(:/icons/branch-open.svg); }
 #sourcesList::item { padding: 0 4px; border: 1px solid transparent; }
-#sourcesList::item:selected { background: #262c3b; border: 1px solid #80a4ae; }
+#sourcesList::item:selected { background: transparent; border: 1px solid transparent; }
 #sourcesList::item:hover { background: #202839; }
 #SourcesTools, #ActionsTools { background: #181e2c; border-top: 1px solid #333b4f; }
 #SourcesTools QToolButton, #ActionsTools QToolButton { background: #262c3b; border: none; padding: 3px; }

@@ -46,7 +46,8 @@ private:
     void removeGroup(const QString &groupId);
     void toggleGroupVisibility(const QString &groupId);
     void toggleGroupLock(const QString &groupId);
-    void moveItemToGroup(CanvasItem *item, const QString &groupId);
+    void moveItemsToGroup(const QStringList &itemIds, const QString &groupId);
+    void addMoveToGroupMenu(QMenu *menu);
     QString suggestedGroupName() const;
     void showMenu(QPoint position);
     QGraphicsScene *scene;

@@ -53,6 +53,18 @@ public:
     using QTreeWidget::QTreeWidget;
     std::function<void(const QStringList &, const QString &)> dropItems;
 protected:
+    void paintEvent(QPaintEvent *event) override {
+        QTreeWidget::paintEvent(event);
+        // Draw one outline around the whole row, including its tree branch,
+        // instead of outlining each name/visibility/lock cell separately.
+        QPainter painter(viewport());
+        painter.setPen(QPen(QColor("#80a4ae"),1));painter.setBrush(Qt::NoBrush);
+        for(auto *row:selectedItems()) {
+            const QRect rect=visualItemRect(row);
+            if(rect.isEmpty() || !viewport()->rect().intersects(rect))continue;
+            painter.drawRect(QRect(0,rect.top(),viewport()->width()-1,rect.height()-1));
+        }
+    }
     void startDrag(Qt::DropActions actions) override {
         bool hasItems=false;
         for(auto *row:selectedItems())if(!isGroupRow(row)){hasItems=true;break;}
@@ -140,8 +152,12 @@ SourcePanel::SourcePanel(QGraphicsScene *value, QWidget *parent) : QWidget(paren
             }
         }
         if(!changed)return;
-        if(!target.isEmpty())for(auto &group:groupList)if(group.id==target)group.expanded=true;
+        if(!target.isEmpty()) {
+            for(auto &group:groupList)if(group.id==target)group.expanded=false;
+            if(auto *row=groupRow(target))row->setExpanded(false);
+        }
         signature.clear();emit edited();synchronize();
+        if(auto *row=groupRow(target))row->setExpanded(false);
     };
     connect(scene,&QGraphicsScene::changed,this,[this]{synchronize();});
     connect(scene,&QGraphicsScene::selectionChanged,this,[this]{synchronize();});
@@ -255,7 +271,10 @@ void SourcePanel::synchronize() {
             if(row)list->setCurrentItem(row);
         } else if(auto *row=findRow(nullptr))list->setCurrentItem(row);
     } else if(selectedCount==1) {
-        if(auto *row=findRow(nullptr))list->setCurrentItem(row);
+        if(auto *row=findRow(nullptr)) {
+            if(row->isSelected())list->setCurrentItem(row,0,QItemSelectionModel::NoUpdate);
+            else list->setCurrentItem(row);
+        }
     }
 }
 void SourcePanel::selectCurrent() {
@@ -324,14 +343,48 @@ void SourcePanel::toggleGroupLock(const QString &groupId) {
     for(auto *item:items)item->setLocked(!allLocked);
     emit edited(); synchronize();
 }
-void SourcePanel::moveItemToGroup(CanvasItem *item,const QString &groupId) {
-    if(!item || item->groupId==groupId)return;
+void SourcePanel::moveItemsToGroup(const QStringList &itemIds,const QString &groupId) {
     QSet<QString> ids;for(const auto &group:groupList)ids.insert(group.id);
-    item->groupId=ids.contains(groupId)?groupId:QString();
+    const QString destination=ids.contains(groupId)?groupId:QString();
+    const QSet<QString> selected(itemIds.begin(),itemIds.end());
+    bool changed=false;
+    for(auto *base:scene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId.isEmpty() && selected.contains(item->id) && item->groupId!=destination) {
+        item->groupId=destination;changed=true;
+    }
+    if(!changed)return;
+    for(auto &group:groupList)if(group.id==destination)group.expanded=false;
+    if(auto *row=groupRow(destination))row->setExpanded(false);
     signature.clear(); emit edited(); synchronize();
+    // Rebuilding the tree reparents the rows. Keep the whole moved selection.
+    {
+        QSignalBlocker blocker(list);list->clearSelection();
+        for(QTreeWidgetItemIterator it(list);*it;++it)
+            if(!isGroupRow(*it) && selected.contains((*it)->data(0,Qt::UserRole).toString()))(*it)->setSelected(true);
+    }
+    selectCurrent();
+    if(auto *row=groupRow(destination))row->setExpanded(false);
+}
+void SourcePanel::addMoveToGroupMenu(QMenu *menu) {
+    QStringList selectedIds;QSet<QString> memberships;
+    for(auto *row:list->selectedItems())if(!isGroupRow(row)) {
+        selectedIds.append(row->data(0,Qt::UserRole).toString());
+        memberships.insert(row->data(0,Qt::UserRole+2).toString());
+    }
+    if(selectedIds.isEmpty())return;
+    auto *move=menu->addMenu("Mover a grupo");
+    const auto addDestination=[this,move,selectedIds,memberships](const QString &name,const QString &id) {
+        auto *action=move->addAction(name);action->setCheckable(true);
+        action->setChecked(memberships.size()==1 && memberships.contains(id));
+        connect(action,&QAction::triggered,this,[this,selectedIds,id]{moveItemsToGroup(selectedIds,id);});
+    };
+    addDestination("Sin grupo",QString());
+    for(const auto &group:groupList)addDestination(group.name,group.id);
 }
 void SourcePanel::showMenu(QPoint position) {
-    if(auto *row=list->itemAt(position))list->setCurrentItem(row);
+    if(auto *row=list->itemAt(position)) {
+        if(row->isSelected())list->setCurrentItem(row,0,QItemSelectionModel::NoUpdate);
+        else list->setCurrentItem(row);
+    }
     QMenu menu(this);
     menu.addMenu(addMenu);
     auto *groupAction=menu.addAction(panelIcon("group"),"Añadir grupo…");
@@ -355,6 +408,7 @@ void SourcePanel::showMenu(QPoint position) {
         auto *lock=menu.addAction(allLocked?"Desbloquear grupo":"Bloquear grupo");
         lock->setObjectName("sourceGroupLock"); lock->setEnabled(!items.isEmpty());
         connect(lock,&QAction::triggered,this,[this,groupId]{toggleGroupLock(groupId);});
+        addMoveToGroupMenu(&menu);
         menu.exec(list->viewport()->mapToGlobal(position));
         return;
     }
@@ -371,13 +425,7 @@ void SourcePanel::showMenu(QPoint position) {
     const int index=siblings.indexOf(item);
     auto *up=menu.addAction("Subir");up->setObjectName("sourceUp");up->setEnabled(index>0);connect(up,&QAction::triggered,this,[this]{moveCurrent(-1);});
     auto *down=menu.addAction("Bajar");down->setObjectName("sourceDown");down->setEnabled(index+1<siblings.size());connect(down,&QAction::triggered,this,[this]{moveCurrent(1);});
-    auto *move=menu.addMenu("Mover a grupo");
-    auto *none=move->addAction("Sin grupo");none->setCheckable(true);none->setChecked(item->groupId.isEmpty());
-    connect(none,&QAction::triggered,this,[this,item]{moveItemToGroup(item,QString());});
-    for(const auto &group:groupList) {
-        auto *action=move->addAction(group.name);action->setCheckable(true);action->setChecked(item->groupId==group.id);
-        connect(action,&QAction::triggered,this,[this,item,id=group.id]{moveItemToGroup(item,id);});
-    }
+    addMoveToGroupMenu(&menu);
     menu.addSeparator();auto *properties=menu.addAction(QIcon(":/icons/settings.svg"),"Propiedades…");properties->setObjectName("sourceProperties");connect(properties,&QAction::triggered,this,[this]{if(auto *source=currentItem())emit propertiesRequested(source);});
     menu.exec(list->viewport()->mapToGlobal(position));
 }
