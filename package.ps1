@@ -42,8 +42,8 @@ if (Test-Path -LiteralPath $fontSource) {
     Copy-Item -Path (Join-Path $fontSource '*') -Destination $fontStage -Recurse -Force
 }
 # Ship the example design stored beside the built executable, when present.
-$defaultDesign = Join-Path $SourceBin 'default.sessions'
-if (!(Test-Path -LiteralPath $defaultDesign)) { $defaultDesign = Join-Path $workspacePath 'out\bin\default.sessions' }
+$defaultDesign = Join-Path $workspacePath 'out\bin\default.sessions'
+if (!(Test-Path -LiteralPath $defaultDesign)) { $defaultDesign = Join-Path $SourceBin 'default.sessions' }
 if (Test-Path -LiteralPath $defaultDesign) {
     # Rebase image references in the packaged copy; leave the user's design intact.
     $design = Get-Content -LiteralPath $defaultDesign -Raw | ConvertFrom-Json
