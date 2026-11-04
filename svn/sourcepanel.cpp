@@ -194,6 +194,7 @@ QTreeWidgetItem *SourcePanel::groupRow(const QString &groupId) const {
     return nullptr;
 }
 void SourcePanel::setGroups(const QList<SourceGroup> &groups) {
+    QSignalBlocker blocker(list);
     groupList.clear();
     QSet<QString> ids;
     for(const auto &group:groups) {
@@ -202,6 +203,9 @@ void SourcePanel::setGroups(const QList<SourceGroup> &groups) {
         ids.insert(group.id);
         groupList.append({group.id,name,group.expanded});
     }
+    // An empty scene and empty groups also produce an empty signature.
+    // Clear the old rows explicitly so that resetting to empty cannot skip it.
+    list->clear();
     signature.clear();
     synchronize();
 }

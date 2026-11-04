@@ -33,6 +33,9 @@ if ($deployExit) { throw 'Falló el despliegue de Qt' }
 Copy-Item -LiteralPath (Join-Path $qtBin '..\plugins\platforms\qoffscreen.dll') -Destination (Join-Path $stage 'platforms') -Force
 # Bundled fonts travel beside the executable; Sessions registers them at startup.
 $fontSource = Join-Path $workspacePath 'font'
+foreach ($candidate in @((Join-Path $workspacePath 'out\bin\font'), (Join-Path $SourceBin 'font'))) {
+    if (Test-Path -LiteralPath $candidate) { $fontSource = $candidate; break }
+}
 if (Test-Path -LiteralPath $fontSource) {
     $fontStage = Join-Path $stage 'font'
     New-Item -ItemType Directory -Path $fontStage -Force | Out-Null
@@ -40,8 +43,24 @@ if (Test-Path -LiteralPath $fontSource) {
 }
 # Ship the example design stored beside the built executable, when present.
 $defaultDesign = Join-Path $SourceBin 'default.sessions'
+if (!(Test-Path -LiteralPath $defaultDesign)) { $defaultDesign = Join-Path $workspacePath 'out\bin\default.sessions' }
 if (Test-Path -LiteralPath $defaultDesign) {
-    Copy-Item -LiteralPath $defaultDesign -Destination $stage -Force
+    # Rebase image references in the packaged copy; leave the user's design intact.
+    $design = Get-Content -LiteralPath $defaultDesign -Raw | ConvertFrom-Json
+    foreach ($item in $design.items) {
+        if ($item.type -ne 'image' -or $item.mediaId) { continue }
+        if (!$item.file) { throw 'El diseño de ejemplo contiene una imagen sin ruta' }
+        $imageSource = $item.file
+        if (![IO.Path]::IsPathRooted($imageSource)) { $imageSource = Join-Path (Split-Path $defaultDesign) $imageSource }
+        if (!(Test-Path -LiteralPath $imageSource -PathType Leaf)) { throw "Falta una imagen del diseño de ejemplo: $imageSource" }
+        $imageFolder = Join-Path $stage 'default_images'
+        New-Item -ItemType Directory -Path $imageFolder -Force | Out-Null
+        $imageHash = (Get-FileHash -LiteralPath $imageSource -Algorithm SHA256).Hash.ToLowerInvariant()
+        $imageName = $imageHash + [IO.Path]::GetExtension($imageSource)
+        Copy-Item -LiteralPath $imageSource -Destination (Join-Path $imageFolder $imageName) -Force
+        $item.file = 'default_images/' + $imageName
+    }
+    [IO.File]::WriteAllText((Join-Path $stage 'default.sessions'), ($design | ConvertTo-Json -Depth 100), [Text.UTF8Encoding]::new($false))
 }
 $vlc = Join-Path $stage 'vlc'
 New-Item -ItemType Directory -Path $vlc -Force | Out-Null

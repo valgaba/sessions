@@ -38,9 +38,10 @@ public:
     QString mediaId;
     QString groupId;
     QImage image;
+    QString imagePath;
     QColor color = Qt::white;
     QFont font = QFont("Arial", 32);
-    bool isImage() const { return !image.isNull(); }
+    bool isImage() const { return !image.isNull() || !imagePath.isEmpty(); }
     bool isText() const { return !isImage() && geometryType == Shape::None; }
     bool isShape() const { return geometryType != Shape::None; }
     bool fixedAspect() const { return geometryType == Shape::Circle || geometryType == Shape::Square; }

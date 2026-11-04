@@ -12,7 +12,6 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QBuffer>
 #include <QSaveFile>
 #include <QScreen>
 #include <QWindow>
@@ -295,7 +294,7 @@ MainWindow::MainWindow() {
             {"Añadir texto…","Add"},{"Añadir imagen…","Load"},{"Añadir círculo…","Add"},{"Añadir cuadrado…","Add"},{"Añadir rectángulo…","Add"},{"Ajustar lienzo","Zoom"},{"Tamaño real","Zoom"}};
         auto *a=menu->addAction(QIcon(":/icons/"+icons.value(label)+".svg"),label);a->setShortcut(key);connect(a,&QAction::triggered,this,fn);return a;
     };
-    action(file,"Nuevo",QKeySequence::New,[this]{if(canDiscard()){for(auto *container:countdownContainers)container->clearWidgets(); canvas->clear(); filename.clear();dirty=false;setWindowModified(false);setWindowTitle("Sessions — Sin título[*]");refresh();}});
+    action(file,"Nuevo",QKeySequence::New,[this]{if(canDiscard()){for(auto *container:countdownContainers)container->clearWidgets(); canvas->clear(); sources->setGroups({}); filename.clear();dirty=false;setWindowModified(false);setWindowTitle("Sessions — Sin título[*]");refresh();}});
     action(file,"Abrir…",QKeySequence::Open,[this]{if(!canDiscard())return;QString p=QFileDialog::getOpenFileName(this,"Abrir diseño",{},"Diseño Sessions (*.sessions)");if(!p.isEmpty() && !readProject(p))QMessageBox::warning(this,"Abrir","No se ha podido abrir el diseño.");});
     action(file,"Guardar",QKeySequence::Save,[this]{save();});
     action(file,"Guardar como…",QKeySequence::SaveAs,[this]{save(true);});
@@ -327,7 +326,7 @@ MainWindow::MainWindow() {
         bool ok;
         QString name = QInputDialog::getText(this,"Añadir imagen","Nombre:",QLineEdit::Normal,suggestedElementName("imagen"),&ok).trimmed();
         if (!ok || name.isEmpty()) return;
-        auto *item = new CanvasItem(image); item->name = name; addItem(item,p);
+        auto *item = new CanvasItem(image); item->imagePath=QFileInfo(path).absoluteFilePath(); item->name = name; addItem(item,p);
     };
     action(insert,"Añadir texto…",QKeySequence("Ctrl+T"),[this,addText]{addText({80,80});});
     action(insert,"Añadir imagen…",QKeySequence("Ctrl+I"),[this,addImage]{addImage({80,80});});
@@ -394,6 +393,7 @@ void MainWindow::launchComposition() {
         auto *copy = source->isShape() ? new CanvasItem(source->shapeType()) : source->isImage() ? new CanvasItem(source->image) : new CanvasItem(source->text);
         copy->id = source->id;
         copy->mediaId = source->mediaId;
+        copy->imagePath = source->imagePath;
         copy->name = source->name;
         copy->setTextFont(source->font); copy->color = source->color;
         copy->setTimerAppearance(source->timerOverdue(), source->timerHidden(), source->timerWarning());
@@ -684,7 +684,7 @@ namespace {
 CanvasItem *clipboardClone(const CanvasItem *source,bool preserveId) {
     auto *copy=source->isShape()?new CanvasItem(source->shapeType()):source->isImage()?new CanvasItem(source->image):new CanvasItem(source->text);
     if(preserveId)copy->id=source->id;
-    copy->name=source->name;copy->color=source->color;copy->setTextFont(source->font);
+    copy->name=source->name;copy->color=source->color;copy->setTextFont(source->font);copy->imagePath=source->imagePath;
     copy->setItemSize(source->itemSize());copy->setPos(source->pos());copy->setZValue(source->zValue());
     copy->setVisible(source->isVisible());copy->setLocked(source->isLocked());copy->groupId=source->groupId;return copy;
 }
@@ -749,7 +749,12 @@ bool MainWindow::writeProject(const QString &path){
         QJsonObject o{{"id",item->id},{"name",item->name},{"x",item->x()},{"y",item->y()},{"w",item->itemSize().width()},{"h",item->itemSize().height()},{"z",item->zValue()},
                       {"text",item->text},{"font",item->font.toString()},{"color",item->color.name()},{"type",item->typeName()},
                       {"visible",item->isVisible()},{"locked",item->isLocked()},{"mediaId",item->mediaId},{"group",item->groupId}};
-        if(item->isImage()){QByteArray bytes;QBuffer buffer(&bytes);buffer.open(QIODevice::WriteOnly);if(!item->image.save(&buffer,"PNG")){saveError=QStringLiteral("No se pudo codificar una imagen del diseño.");return false;}o["data"]=QString::fromLatin1(bytes.toBase64());}
+        if(item->isImage() && item->mediaId.isEmpty()) {
+            if(item->imagePath.trimmed().isEmpty()) {
+                saveError="La imagen «"+item->name+"» no tiene un archivo asociado. Selecciónalo en sus propiedades.";return false;
+            }
+            o["file"]=item->imagePath;
+        }
         items.append(o);
     }
     QJsonArray widgets;
@@ -817,7 +822,20 @@ bool MainWindow::readProject(const QString &path){
         const double minimum=o["type"]=="line"?1:24;
         if(o["w"].toDouble()<minimum || o["h"].toDouble()<minimum)return fail();
         CanvasItem *item=nullptr;
-        if(o["type"]=="image"){QImage image;image.loadFromData(QByteArray::fromBase64(o["data"].toString().toLatin1()),"PNG");if(image.isNull())return fail();item=new CanvasItem(image);}
+        if(o["type"]=="image") {
+            QImage image;QString imagePath;
+            if(!o["mediaId"].toString().isEmpty()) {
+                // Media frames are decoded by their Multimedia action, never
+                // embedded in the project. Keep only their layout here.
+                image=QImage(1,1,QImage::Format_ARGB32);image.fill(Qt::transparent);
+            } else {
+                if(!o["file"].isString() || o["file"].toString().trimmed().isEmpty())return fail();
+                imagePath=o["file"].toString();
+                if(QFileInfo(imagePath).isRelative())imagePath=QFileInfo(path).dir().absoluteFilePath(imagePath);
+                image.load(imagePath);
+            }
+            item=new CanvasItem(image);item->imagePath=imagePath;
+        }
         else if(o["type"]=="text")item=new CanvasItem(o["text"].toString());
         else if(o["type"]=="circle")item=new CanvasItem(CanvasItem::Shape::Circle);
         else if(o["type"]=="square")item=new CanvasItem(CanvasItem::Shape::Square);

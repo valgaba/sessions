@@ -16,6 +16,7 @@ private:
     QDoubleSpinBox *fields[4];
     QPlainTextEdit *textEdit = nullptr;
     QLineEdit *nameEdit;
+    QLineEdit *imageFileEdit = nullptr;
     QFont font;
     QColor color;
 };

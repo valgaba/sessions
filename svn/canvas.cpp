@@ -18,7 +18,7 @@ CanvasItem::CanvasItem(const QString &value) : text(value), name(value.simplifie
 CanvasItem::CanvasItem(const QImage &value) : CanvasItem(QString()) {
     image = value;
     name = "Imagen";
-    size = value.size().scaled(480, 300, Qt::KeepAspectRatio);
+    size = value.isNull()?QSizeF(320,180):QSizeF(value.size().scaled(480,300,Qt::KeepAspectRatio));
 }
 CanvasItem::CanvasItem(Shape value) : CanvasItem(QString()) {
     geometryType = value;

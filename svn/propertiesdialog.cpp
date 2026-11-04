@@ -57,6 +57,16 @@ PropertiesDialog::PropertiesDialog(CanvasItem *value, QWidget *parent)
         });
     } else {
         layout->addWidget(new QLabel(QString("Imagen original: %1 × %2 px").arg(item->image.width()).arg(item->image.height())));
+        if(item->mediaId.isEmpty()) {
+            imageFileEdit=new QLineEdit(item->imagePath);imageFileEdit->setObjectName("propertyName");
+            imageFileEdit->setToolTip("Ruta del archivo de imagen");
+            auto *row=new QHBoxLayout;row->addWidget(imageFileEdit,1);
+            auto *browse=new QPushButton("Examinar…");row->addWidget(browse);layout->addLayout(row);
+            connect(browse,&QPushButton::clicked,this,[this]{
+                const QString path=QFileDialog::getOpenFileName(this,"Archivo de imagen",imageFileEdit->text(),"Imágenes (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.svg);;Todos los archivos (*)");
+                if(!path.isEmpty())imageFileEdit->setText(path);
+            });
+        }
     }
     auto *buttons = new QDialogButtonBox;
     auto *accept = buttons->addButton("Aceptar", QDialogButtonBox::AcceptRole);
@@ -68,6 +78,11 @@ PropertiesDialog::PropertiesDialog(CanvasItem *value, QWidget *parent)
 }
 void PropertiesDialog::accept() {
     if (nameEdit->text().trimmed().isEmpty()) return;
+    if(imageFileEdit && imageFileEdit->text().trimmed()!=item->imagePath) {
+        const QString path=imageFileEdit->text().trimmed();QImage image(path);
+        if(image.isNull()){QMessageBox::warning(this,"Imagen","No se ha podido leer el archivo de imagen.");return;}
+        item->image=image;item->imagePath=QFileInfo(path).absoluteFilePath();
+    }
     item->name = nameEdit->text().trimmed();
     item->setPos(fields[0]->value(), fields[1]->value());
     item->setItemSize({fields[2]->value(), fields[3]->value()});
