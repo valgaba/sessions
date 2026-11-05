@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "fontloader.h"
+#include "multimedia.h"
 #include <QApplication>
 #include <QStyleFactory>
 #include <QStyle>
@@ -8,6 +9,9 @@
 #include <QIcon>
 #include <QSplashScreen>
 #include <QPixmap>
+#include <QThread>
+#include <QEventLoop>
+#include <memory>
 int smokeTest(QApplication &app);
 int playbackTest(QApplication &app);
 int mediaLoadTest(QApplication &app);
@@ -15,13 +19,17 @@ int main(int argc,char **argv){
     QApplication app(argc,argv);app.setApplicationName("Sessions");app.setOrganizationName("Sessions");
     app.setApplicationVersion("1.0.0");app.setWindowIcon(QIcon(":/icons/SessionsAppIcon.png"));
     const bool testMode=app.arguments().contains("--smoke-test")||app.arguments().contains("--playback-test")||app.arguments().contains("--media-load-test");
-    // Show the splash before loading fonts and styles, which are the slowest
-    // part on low-end machines.
+    // Prepare the media engine alongside fonts and styles while the splash
+    // remains visible and its event loop stays responsive.
     QSplashScreen splash(QPixmap(":/icons/splashscreen.png"));
+    std::unique_ptr<QThread> mediaWarmup;
     if(!testMode){
         splash.setCursor(Qt::WaitCursor);
+        splash.showMessage("Preparando multimedia…",Qt::AlignBottom|Qt::AlignHCenter,QColor("#80a4ae"));
         splash.show();
         QCoreApplication::processEvents();
+        mediaWarmup.reset(QThread::create([]{Multimedia::warmUpBackend();}));
+        mediaWarmup->start();
     }
     QString fontDirectory=QDir(app.applicationDirPath()).filePath("font");
     if(!QDir(fontDirectory).exists())fontDirectory=QDir(app.applicationDirPath()).filePath("fonts");
@@ -48,6 +56,12 @@ int main(int argc,char **argv){
     if(app.arguments().contains("--smoke-test"))return smokeTest(app);
     if(app.arguments().contains("--playback-test"))return playbackTest(app);
     if(app.arguments().contains("--media-load-test"))return mediaLoadTest(app);
+    if(mediaWarmup) {
+        QEventLoop waiting;
+        QObject::connect(mediaWarmup.get(),&QThread::finished,&waiting,&QEventLoop::quit);
+        if(mediaWarmup->isRunning())waiting.exec();
+        mediaWarmup->wait();
+    }
     MainWindow window;
     if(!testMode)splash.finish(&window);
     window.show();

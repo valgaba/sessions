@@ -1,5 +1,6 @@
 <RCC>
   <qresource prefix="/">
+    <file alias="media/warmup.mp4">tests/fixtures/media-test.mp4</file>
     <file>radit.qss</file>
     <file>sessions.qss</file>
     <file>icons/Close.svg</file>

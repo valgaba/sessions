@@ -16,6 +16,8 @@ El ZIP de Releases incluye ese motor en `vlc/`, junto al ejecutable. La instalac
 
 Los contenedores MP4, MOV, M4V y M4A usan el lector FFmpeg (`avformat`) incluido en VLC. Evita los reinicios del reloj y congelaciones que el lector MP4 nativo puede producir con algunos archivos fragmentados.
 
+Durante el splash se prepara LibVLC y se decodifica un fotograma de un clip interno sin sonido ni salida visible. El motor conserva una instancia para mantener su registro de plugins. La preparación de cada archivo se hace en segundo plano con una barra de carga de estilo Radit; se consulta su duración antes de Play. Los tiempos aparecen a la derecha del deslizador con una fuente mayor.
+
 Las miniaturas usan un solo hilo de decodificación; los MOV usan también ese modo durante la reproducción para evitar un cierre de VLC 3 con el códec DXV de Resolume al detenerlo después de sus primeros fotogramas. Los búferes de vídeo incluyen filas de relleno alineadas como recomienda LibVLC, sin cambiar el tamaño visible.
 
 ## Ejecutar

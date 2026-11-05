@@ -35,6 +35,10 @@ QDialog#FadeOptions { background: #181e2c; border: 1px solid #333b4f; }
 #Multimedia QPushButton[thumbnail="true"] { padding: 2px; background: #181e2c; border: 1px solid #686b74; }
 #Multimedia QPushButton[thumbnail="true"]:hover { border-color: #80a4ae; background: #262c3b; }
 #Multimedia QPushButton[thumbnail="true"]:disabled { border-color: #333b4f; }
+#Multimedia QProgressBar#multimediaLoading {
+    background: #181e2c; border: 1px solid #535b6a; border-radius: 0; padding: 0;
+}
+#Multimedia QProgressBar#multimediaLoading::chunk { background: #80a4ae; border: none; width: 18px; }
 /* Keep Radit's groove border visible, including paused/finished/disabled states. */
 QSlider#multimediaSlider { background: transparent; border: none; }
 QSlider#multimediaSlider::groove:horizontal {
@@ -142,4 +146,4 @@ QStatusBar { background: #181e2c; }
 }
 #ItemPropertiesDialog QPushButton:hover { border-color: #80a4ae; background: #30384b; }
 #Multimedia QPushButton[compact="true"] { padding: 1px; }
-#Multimedia QLabel#MultimediaTime { font-size: 10px; }
+#Multimedia QLabel#MultimediaTime { font-size: 14px; color: #80a4ae; }

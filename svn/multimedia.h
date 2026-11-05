@@ -8,6 +8,7 @@
 class QLabel;
 class QPushButton;
 class QSlider;
+class QProgressBar;
 struct MediaPlayback;
 struct VideoFrames;
 struct ThumbnailProbe;
@@ -48,6 +49,7 @@ public:
     void setLoop(bool enabled);
     static bool isImageFile(const QString &file);
     static bool backendAvailable();
+    static void warmUpBackend();
     static QList<AudioOutputDevice> audioDevices();
     static bool volumeControlAvailable();
     QString currentAudioDevice() const;
@@ -81,6 +83,7 @@ private:
     void updatePlayback();
     void updateTime(qint64 position, qint64 duration);
     void updateThumbnail(const QImage &image);
+    void setLoading(bool loading);
     QString mediaName = "Multimedia";
     QString path;
     QString compositionAudioDevice;
@@ -103,6 +106,7 @@ private:
     QPushButton *nextButton;
     QPushButton *mixButton;
     QSlider *slider;
+    QProgressBar *loadingBar;
     QTimer poll;
     std::unique_ptr<MediaPlayback> playback;
     std::unique_ptr<VideoFrames> frames;
@@ -111,6 +115,8 @@ private:
     QImage lastFrame;
     QImage firstFrame;
     bool cueMode = false;
+    bool preparingFile = false;
+    int pendingTransport = 0; // 1: Play, 2: Cue, once preparation finishes.
     bool looping = false;
     bool imageMode = false;
     bool imageActive = false;
@@ -124,4 +130,5 @@ private:
     bool seeking = false;
     QElapsedTimer seekWait;
     quint64 frameGeneration = 0;
+    quint64 preparationGeneration = 0;
 };

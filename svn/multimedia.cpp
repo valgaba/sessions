@@ -66,6 +66,10 @@ struct VlcApi {
     void *(*newMedia)(void *,const char *) = nullptr;
     void (*releaseMedia)(void *) = nullptr;
     void (*mediaOption)(void *,const char *) = nullptr;
+    int (*parseMedia)(void *,int,int) = nullptr;
+    int (*parsedStatus)(void *) = nullptr;
+    void (*stopParsing)(void *) = nullptr;
+    qint64 (*mediaDuration)(void *) = nullptr;
     void (*setMedia)(void *,void *) = nullptr;
     int (*play)(void *) = nullptr;
     void (*pause)(void *,int) = nullptr;
@@ -122,6 +126,10 @@ struct VlcApi {
             resolve(freeMemory,"libvlc_free");
             resolve(audioSetVolume,"libvlc_audio_set_volume");
             resolve(audioGetVolume,"libvlc_audio_get_volume");
+            resolve(parseMedia,"libvlc_media_parse_with_options");
+            resolve(parsedStatus,"libvlc_media_get_parsed_status");
+            resolve(stopParsing,"libvlc_media_parse_stop");
+            resolve(mediaDuration,"libvlc_media_get_duration");
             return;
         }
     }
@@ -147,20 +155,54 @@ struct MediaPlayback {
 };
 // A separate muted decoder prepares a thumbnail without launching or cueing media.
 struct ThumbnailProbe : QObject {
+    std::unique_ptr<QThread> preparation;
+    QImage preparedImage;
+    qint64 preparedDuration=0;
     std::unique_ptr<MediaPlayback> player;
     std::unique_ptr<VideoFrames> frames;
     QTimer timeout;
-    std::function<void(const QImage &)> completed;
-    explicit ThumbnailProbe(std::function<void(const QImage &)> callback):completed(std::move(callback)) {
+    std::function<void(const QImage &,qint64)> completed;
+    explicit ThumbnailProbe(std::function<void(const QImage &,qint64)> callback):completed(std::move(callback)) {
         timeout.setSingleShot(true);connect(&timeout,&QTimer::timeout,this,[this]{finish({});});
     }
-    ~ThumbnailProbe() override {player.reset();frames.reset();}
+    ~ThumbnailProbe() override {if(preparation){preparation->requestInterruption();preparation->wait();}player.reset();frames.reset();}
     void finish(const QImage &image) {
+        if(player && player->player)preparedDuration=qMax(preparedDuration,vlc().getLength(player->player));
         timeout.stop();player.reset();frames.reset();
-        auto callback=std::move(completed);completed={};if(callback)callback(image);
+        auto callback=std::move(completed);completed={};if(callback)callback(image,preparedDuration);
     }
-    void start(const QString &path) {
-        player=std::make_unique<MediaPlayback>();if(!player->player){finish({});return;}
+    void start(const QString &path,bool audioOnly=false,bool imageOnly=false) {
+        // Loading LibVLC's plugins or reading a large image must not block
+        // the GUI, otherwise its loading indicator cannot animate.
+        preparation.reset(QThread::create([this,path,imageOnly]{
+            if(imageOnly) {
+                QImageReader reader(path);reader.setAutoTransform(true);
+                const auto size=reader.size();if(size.isValid())reader.setScaledSize(size.scaled(320,180,Qt::KeepAspectRatio));
+                preparedImage=reader.read();
+            } else {
+                player=std::make_unique<MediaPlayback>();
+                auto &api=vlc();
+                if(!player->player || !api.parseMedia || !api.parsedStatus || !api.stopParsing || !api.mediaDuration)return;
+                auto *media=api.newMedia(player->instance,QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).toUtf8().constData());
+                if(!media)return;
+                // Read local metadata without playing audio or sending frames.
+                if(api.parseMedia(media,0,5000)==0) {
+                    QElapsedTimer deadline;deadline.start();
+                    while(api.parsedStatus(media)==0 && deadline.elapsed()<5500 && !QThread::currentThread()->isInterruptionRequested())QThread::msleep(20);
+                    preparedDuration=qMax(qint64(0),api.mediaDuration(media));
+                    api.stopParsing(media);
+                }
+                api.releaseMedia(media);
+            }
+        }));
+        connect(preparation.get(),&QThread::finished,this,[this,path,audioOnly,imageOnly]{
+            if(imageOnly){finish(preparedImage);return;}
+            if(!player || !player->player || audioOnly){finish({});return;}
+            startVideo(path);
+        });
+        preparation->start();
+    }
+    void startVideo(const QString &path) {
         auto &api=vlc();auto *media=api.newMedia(player->instance,QDir::toNativeSeparators(path).toUtf8().constData());
         if(!media){finish({});return;}
         api.mediaOption(media,":no-audio");api.mediaOption(media,":no-spu");
@@ -188,7 +230,7 @@ Multimedia::Multimedia(QWidget *parent):QWidget(parent) {
     title=new QLabel(mediaName); title->setObjectName("MultimediaTitle");title->setTextFormat(Qt::PlainText);
     title->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);header->addWidget(title,1);
     status=new QLabel("Sin archivo",this);status->setObjectName("MultimediaStatus");status->hide();
-    time=new QLabel;time->setObjectName("MultimediaTime");time->setAlignment(Qt::AlignRight);header->addWidget(time);updateTime(0,0);
+    time=new QLabel;time->setObjectName("MultimediaTime");time->setAlignment(Qt::AlignRight|Qt::AlignVCenter);updateTime(0,0);
     playButton=new QPushButton;playButton->setObjectName("multimediaPlay");playButton->setProperty("thumbnail",true);
     playButton->setIconSize(QSize(36,20));playButton->setToolTip("Play · Reproducir");playButton->setAccessibleName("Play");updateThumbnail({});
     pauseButton=new QPushButton(QIcon(":/icons/Pause.svg"),"Pause");pauseButton->setObjectName("multimediaPause");pauseButton->setToolTip("Pause");pauseButton->setAccessibleName("Pause");
@@ -212,7 +254,11 @@ Multimedia::Multimedia(QWidget *parent):QWidget(parent) {
     auto *controls=new QHBoxLayout;controls->setSpacing(3);
     for(auto *button:{playButton,cueButton,pauseButton,stopButton})controls->addWidget(button);
     controls->addStretch();layout->addLayout(controls);
-    slider=new Slider;slider->setObjectName("multimediaSlider");slider->setFixedHeight(26);slider->setEnabled(false);layout->addWidget(slider);
+    loadingBar=new QProgressBar;loadingBar->setObjectName("multimediaLoading");
+    loadingBar->setRange(0,0);loadingBar->setTextVisible(false);loadingBar->setFixedHeight(8);
+    loadingBar->setToolTip("Cargando archivo…");loadingBar->setAccessibleName("Cargando multimedia");loadingBar->hide();layout->addWidget(loadingBar);
+    slider=new Slider;slider->setObjectName("multimediaSlider");slider->setFixedHeight(26);slider->setEnabled(false);
+    auto *timeline=new QHBoxLayout;timeline->setSpacing(8);timeline->addWidget(slider,1);timeline->addWidget(time);layout->addLayout(timeline);
     playButton->setEnabled(false);pauseButton->setEnabled(false);stopButton->setEnabled(false);
     connect(playButton,&QPushButton::clicked,this,&Multimedia::play);
     connect(cueButton,&QPushButton::clicked,this,&Multimedia::cue);
@@ -229,6 +275,11 @@ Multimedia::Multimedia(QWidget *parent):QWidget(parent) {
     setToolTip("Botón derecho: archivo y propiedades de Multimedia");
 }
 Multimedia::~Multimedia() { thumbnailProbe.reset();poll.stop(); playback.reset(); }
+void Multimedia::setLoading(bool loading) {
+    loadingBar->setVisible(loading);
+    loadingBar->setAccessibleDescription(loading?"Preparando el archivo":"Archivo preparado");
+    updateGeometry();
+}
 void Multimedia::updateThumbnail(const QImage &image) {
     thumbnailImage=image;
     QPixmap preview(36,20);preview.fill(QColor("#181e2c"));QPainter painter(&preview);
@@ -241,6 +292,36 @@ void Multimedia::updateThumbnail(const QImage &image) {
     painter.end();playButton->setIcon(QIcon(preview));
 }
 bool Multimedia::backendAvailable(){return vlc().ready;}
+void Multimedia::warmUpBackend() {
+    // Keep an instance alive so VLC retains its plugin registry after startup.
+    static MediaPlayback warmup;
+    if(!warmup.player)return;
+    QFile clip(":/media/warmup.mp4");
+    QTemporaryFile file(QDir::tempPath()+"/sessions-warmup-XXXXXX.mp4");
+    if(!clip.open(QIODevice::ReadOnly) || !file.open())return;
+    const QByteArray bytes=clip.readAll();
+    if(file.write(bytes)!=bytes.size())return;
+    const QString filename=file.fileName();file.close();
+    auto &api=vlc();
+    auto *media=api.newMedia(warmup.instance,QDir::toNativeSeparators(filename).toUtf8().constData());
+    if(!media)return;
+    api.mediaOption(media,":no-audio");api.mediaOption(media,":no-spu");
+    api.mediaOption(media,":demux=avformat");api.mediaOption(media,":avcodec-threads=1");
+    api.setMedia(warmup.player,media);api.releaseMedia(media);api.mute(warmup.player,1);
+    VideoFrames frames;frames.maximumSize=QSize(32,32);frames.notify=[]{};
+    api.setCallbacks(warmup.player,VideoFrames::lock,VideoFrames::unlock,VideoFrames::display,&frames);
+    api.setFormat(warmup.player,VideoFrames::format,nullptr);
+    if(api.play(warmup.player)==0) {
+        QElapsedTimer deadline;deadline.start();
+        while(!frames.queued && deadline.elapsed()<3000) {
+            const int state=api.getState(warmup.player);
+            if(state==6 || state==7)break;
+            QThread::msleep(20);
+        }
+    }
+    // Release callbacks before their local frame buffer goes out of scope.
+    api.stop(warmup.player);api.releasePlayer(warmup.player);warmup.player=nullptr;
+}
 QList<AudioOutputDevice> Multimedia::audioDevices() {
     QList<AudioOutputDevice> devices;
 #ifdef Q_OS_WIN
@@ -375,35 +456,51 @@ void Multimedia::configure(const QString &name,const QString &file) {
     mixButton->setEnabled(QFileInfo(path).isFile());
     playButton->setAccessibleName("Play · "+mediaName);
     const QString thumbnailPath=path;
-    QTimer::singleShot(0,this,[this,thumbnailPath]{
-        if(path!=thumbnailPath || !QFileInfo(path).isFile() || playback)return;
-        if(imageMode){QImageReader reader(path);reader.setAutoTransform(true);const auto size=reader.size();if(size.isValid())reader.setScaledSize(size.scaled(320,180,Qt::KeepAspectRatio));updateThumbnail(reader.read());return;}
+    const auto generation=++preparationGeneration;
+    preparingFile=QFileInfo(path).isFile();pendingTransport=0;setLoading(preparingFile);
+    QTimer::singleShot(0,this,[this,thumbnailPath,generation]{
+        if(generation!=preparationGeneration || path!=thumbnailPath)return;
+        if(!QFileInfo(path).isFile() || playback) {
+            preparingFile=false;pendingTransport=0;setLoading(false);return;
+        }
         const QSet<QString> audio{"mp3","wav","flac","ogg","opus","aac","m4a","wma","aif","aiff"};
-        if(audio.contains(QFileInfo(path).suffix().toLower()) || !backendAvailable())return;
-        thumbnailProbe=std::make_unique<ThumbnailProbe>([this](const QImage &image){if(!image.isNull())updateThumbnail(image);});thumbnailProbe->start(path);
+        thumbnailProbe=std::make_unique<ThumbnailProbe>([this](const QImage &image,qint64 total){
+            if(!image.isNull())updateThumbnail(image);
+            knownDuration=qMax(knownDuration,total);updateTime(0,knownDuration);
+            preparingFile=false;setLoading(false);
+            // Leave the probe's completion callback before Play/Cue releases it.
+            if(pendingTransport)QTimer::singleShot(0,this,[this]{
+                if(preparingFile)return;
+                const int requested=pendingTransport;pendingTransport=0;
+                if(requested==1)play();else if(requested==2)cue();
+            });
+        });
+        thumbnailProbe->start(path,audio.contains(QFileInfo(path).suffix().toLower()),imageMode);
     });
     layout()->activate();updateGeometry();
     emit configurationChanged();
 }
 bool Multimedia::startPlayback() {
+    setLoading(true);
     if(qEnvironmentVariableIsSet("SESSIONS_MEDIA_TRACE"))std::fprintf(stderr,"SESSIONS start cue=%d playing=%d finished=%d\n",cueMode,isPlaying(),finished);
-    if(!QFileInfo(path).isFile()){status->setText("Archivo no encontrado");return false;}
+    if(!QFileInfo(path).isFile()){setLoading(false);status->setText("Archivo no encontrado");return false;}
     if(imageMode) {
         QImageReader reader(path);reader.setAutoTransform(true);
         QImage image=reader.read();
-        if(image.isNull()){status->setText("No se pudo abrir la imagen");status->setToolTip(reader.errorString());return false;}
+        if(image.isNull()){setLoading(false);status->setText("No se pudo abrir la imagen");status->setToolTip(reader.errorString());return false;}
         lastFrame=image;firstFrame=image;imageActive=true;awaitingFreshFrame=false;
         status->setText(cueMode?"En composición":"En salida");
         playButton->setEnabled(cueMode);stopButton->setEnabled(true);
         emit frameReady(lastFrame);
+        setLoading(false);
         return true;
     }
-    if(!backendAvailable()){status->setText("VLC 3 de 64 bits no disponible");return false;}
+    if(!backendAvailable()){setLoading(false);status->setText("VLC 3 de 64 bits no disponible");return false;}
     if(!playback) {
         playback=std::make_unique<MediaPlayback>();
-        if(!playback->player){status->setText("No se pudo iniciar el reproductor");playback.reset();return false;}
+        if(!playback->player){setLoading(false);status->setText("No se pudo iniciar el reproductor");playback.reset();return false;}
         auto &api=vlc();auto *media=api.newMedia(playback->instance,QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).toUtf8().constData());
-        if(!media){status->setText("No se pudo abrir el archivo");playback.reset();return false;}
+        if(!media){setLoading(false);status->setText("No se pudo abrir el archivo");playback.reset();return false;}
         // VLC's native MP4 demuxer can reset PCR at fragment boundaries and
         // freeze the last decoded frame while its new clock catches up.
         // FFmpeg's demuxer preserves the timeline of fragmented MP4/MOV files.
@@ -425,7 +522,7 @@ bool Multimedia::startPlayback() {
     applyAudioDevice(cueMode?compositionAudioDevice:outputAudioDevice);
     applyAudioVolume(cueMode?compositionVolume:outputVolume);
     acceptFrames=true;
-    if(!isPlaying() && vlc().play(playback->player)<0){acceptFrames=false;status->setText("Error al reproducir");return false;}
+    if(!isPlaying() && vlc().play(playback->player)<0){setLoading(false);acceptFrames=false;status->setText("Error al reproducir");return false;}
     status->setText("Cargando…");playButton->setEnabled(cueMode);stopButton->setEnabled(true);poll.start();
     return true;
 }
@@ -442,11 +539,15 @@ void Multimedia::restartForLoop() {
     status->setText(cueMode?"En composición":"En marcha");
 }
 void Multimedia::play() {
+    if(preparingFile){pendingTransport=1;setLoading(true);return;}
+    pendingTransport=0;
     thumbnailProbe.reset();
     cueMode=false;
     if(startPlayback())emit playRequested();
 }
 void Multimedia::cue() {
+    if(preparingFile){pendingTransport=2;setLoading(true);return;}
+    pendingTransport=0;
     thumbnailProbe.reset();
     stopPlayback(false);playback.reset();frames.reset();lastFrame=QImage();firstFrame=QImage();cueMode=true;emit cueRequested();
     startPlayback();
@@ -458,6 +559,7 @@ void Multimedia::receiveFrame() {
     {QMutexLocker guard(&frames->mutex);if(!frames->pixels)return;lastFrame=QImage(frames->pixels,int(frames->width),int(frames->height),int(frames->pitch),QImage::Format_RGB32).copy();}
     if(firstFrame.isNull()){firstFrame=lastFrame;if(thumbnailImage.isNull())updateThumbnail(lastFrame);}
     awaitingFreshFrame=false;
+    setLoading(false);
     emit frameReady(lastFrame);
 }
 void Multimedia::pause(){
@@ -468,6 +570,8 @@ void Multimedia::stop(){
     stopPlayback(true);
 }
 void Multimedia::stopPlayback(bool clearOutput){
+    pendingTransport=0;
+    setLoading(false);
     duration(); // Retain metadata before VLC releases its input.
     cueMode=false;imageActive=false;finished=false;finishedTime=0;acceptFrames=false;awaitingFreshFrame=true;shownPosition=0;seeking=false;
     poll.stop();if(playback && playback->player)vlc().stop(playback->player);
@@ -488,6 +592,8 @@ void Multimedia::updatePlayback(){
     if(!playback || !playback->player)return;
     if(finished)return;
     int state=vlc().getState(playback->player);qint64 total=duration(),current=position();
+    if(state==1 || state==2)setLoading(true);
+    else if(state>=3)setLoading(false);
     if(cueMode && state==3 && !hasVideo())vlc().mute(playback->player,0);
     // End-of-file may reset VLC's clock/length before its terminal state is read.
     // Rewind only on an explicit seek/Stop or once completion is confirmed.
