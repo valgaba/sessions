@@ -1123,7 +1123,7 @@ int smokeTest(QApplication &app) {
             check(flagsSaved && purgeSaved && nextSaved && mixSaved,"Purge Next and Mix modes survive saving and reopening");
             clip->play();check(waitFor([&]{return clip->duration()>0 && clip->isPlaying();}),"start video for automatic Next and Purge");
             QPointer<Multimedia> removedClip=clip;clip->seek(clip->duration()-600);
-            check(waitFor([&]{return !removedClip && audio->isPlaying();},6000),"completion purges the finished action and starts the next enabled Multimedia");audio->stop();
+            check(waitFor([&]{return !removedClip && audio->isPlaying();},6000),"completion starts the following Multimedia with Next enabled and Purge removes the finished action");audio->stop();
             app.processEvents();auto *mini=red->findChild<QPushButton *>("multimediaPlay");auto *cue=red->findChild<QPushButton *>("multimediaCue");
             check(mini->width()>=64 && cue->width()>=64 && mini->y()==cue->y() && mini->y()>red->findChild<QPushButton *>("multimediaNext")->y() && red->findChild<QLabel *>("MultimediaStatus")->isHidden(),"larger Multimedia playback controls occupy a second row below the header without a status label");
             mixed.grab().save(QApplication::applicationDirPath()+"/../build/multimedia-header.png");

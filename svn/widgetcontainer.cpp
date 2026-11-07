@@ -78,6 +78,7 @@ WidgetContainer::WidgetContainer(QWidget *parent) : QScrollArea(parent) {
     shortcut(QKeySequence::Cut, [this] { copyAction(true); });
     shortcut(QKeySequence::Paste, [this] { pasteAction(); });
     shortcut(QKeySequence::Delete, [this] { deleteAction(); });
+    shortcut(QKeySequence::SelectAll, [this] { selectAllActions(); });
     shortcut(QKeySequence("Alt+Up"), [this] { if (selected) moveWidget(selected,contentsLayout->indexOf(selected)-1); });
     shortcut(QKeySequence("Alt+Down"), [this] { if (selected) moveWidget(selected,contentsLayout->indexOf(selected)+2); });
 }
@@ -86,7 +87,8 @@ void WidgetContainer::showAddMenu(QPoint globalPos) {
 }
 void WidgetContainer::showActionsMenu(QWidget *action, QPoint globalPos) {
     if (!allowCountdown) return;
-    if (action) selectAction(action,true);
+    if (action && !selection.contains(action)) selectAction(action,true);
+    else if(action)selected=action;
     if (selected) selected->setFocus(Qt::OtherFocusReason); else setFocus(Qt::OtherFocusReason);
     QMenu menu(this);
     auto *add = menu.addAction("Add Countdown"); add->setObjectName("addCountdown");
@@ -99,6 +101,26 @@ void WidgetContainer::showActionsMenu(QWidget *action, QPoint globalPos) {
     cut->setEnabled(selected); copy->setEnabled(selected); remove->setEnabled(selected);
     paste->setEnabled(clipboardAction());
     menu.addSeparator();
+    auto *selectAll=menu.addAction("Seleccionar todos\tCtrl+A");selectAll->setObjectName("selectAllActions");
+    auto *deselectAll=menu.addAction("Deseleccionar todos");deselectAll->setObjectName("deselectAllActions");
+    selectAll->setEnabled(widgetCount()>0);deselectAll->setEnabled(!selection.isEmpty());
+    QList<Multimedia *> targets;
+    for(auto *entry:widgetsInOrder())if(selection.contains(entry))if(auto *media=qobject_cast<Multimedia *>(entry))targets.append(media);
+    menu.addSeparator();
+    auto mode=[&](const QString &name,const QString &icon,auto eligible,auto checked,auto apply){
+        auto *option=menu.addAction(QIcon(icon),name);option->setCheckable(true);
+        QList<QPointer<Multimedia>> applicable;bool all=true;
+        for(auto *media:targets)if(eligible(media)){applicable.append(media);all=all && checked(media);}
+        option->setEnabled(!applicable.isEmpty());option->setChecked(!applicable.isEmpty() && all);
+        connect(option,&QAction::triggered,this,[applicable,apply](bool enabled){for(const auto &media:applicable)if(media)apply(media.data(),enabled);});
+    };
+    auto any=[](Multimedia *){return true;};
+    auto timed=[](Multimedia *media){return !media->isStillImage();};
+    mode("Activar Next",":/icons/Next.svg",any,[](Multimedia *m){return m->playsNext();},[](Multimedia *m,bool on){m->setNext(on);});
+    mode("Activar Purge",":/icons/Purge.svg",timed,[](Multimedia *m){return m->purges();},[](Multimedia *m,bool on){m->setPurge(on);});
+    mode("Activar Loop",":/icons/Loop.svg",timed,[](Multimedia *m){return m->loops();},[](Multimedia *m,bool on){m->setLoop(on);});
+    mode("Activar Mix",QString(),any,[](Multimedia *m){return m->mixes();},[](Multimedia *m,bool on){m->setMix(on);});
+    menu.addSeparator();
     auto *up = menu.addAction("Subir\tAlt+↑"); up->setObjectName("moveActionUp");
     auto *down = menu.addAction("Bajar\tAlt+↓"); down->setObjectName("moveActionDown");
     int index = selected ? contentsLayout->indexOf(selected) : -1;
@@ -110,6 +132,29 @@ void WidgetContainer::showActionsMenu(QWidget *action, QPoint globalPos) {
     remove->setIcon(QIcon(":/icons/Remove.svg"));properties->setIcon(QIcon(":/icons/settings.svg"));
     up->setIcon(QIcon(QIcon(":/icons/MoveLeft.svg").pixmap(16,16).transformed(QTransform().rotate(90))));
     down->setIcon(QIcon(QIcon(":/icons/MoveRight.svg").pixmap(16,16).transformed(QTransform().rotate(90))));
+    menu.addSeparator();
+    auto *paletteAction=new QWidgetAction(&menu);
+    auto *paletteWidget=new QWidget(&menu);auto *paletteLayout=new QHBoxLayout(paletteWidget);
+    paletteLayout->setContentsMargins(2,2,2,2);paletteLayout->setSpacing(4);
+    const auto colorTargets=selection;
+    auto colorButton=[&](const QString &name,const QColor &color){
+        auto *button=new QPushButton(paletteWidget);button->setFlat(true);button->setFixedSize(22,22);
+        button->setIconSize(QSize(16,16));button->setToolTip(name);button->setAccessibleName(name);
+        button->setCursor(Qt::PointingHandCursor);button->setEnabled(!colorTargets.isEmpty());
+        QPixmap icon(24,24);icon.fill(Qt::transparent);QPainter painter(&icon);painter.setRenderHint(QPainter::Antialiasing);
+        if(color.isValid()){painter.setPen(Qt::NoPen);painter.setBrush(color);painter.drawRoundedRect(4,4,16,16,4,4);}
+        else {painter.setPen(QPen(QColor("#80a4ae"),1));painter.drawRect(4,4,15,15);painter.drawLine(5,18,18,5);}
+        painter.end();button->setIcon(QIcon(icon));paletteLayout->addWidget(button);
+        connect(button,&QPushButton::clicked,&menu,[this,&menu,colorTargets,color]{
+            for(const auto &target:colorTargets)if(target)setActionColor(target,color.isValid()?color.name():QString());
+            emit contentsChanged();menu.close();
+        });
+    };
+    colorButton("Sin color",QColor());
+    colorButton("Rojo",QColor(231,76,60));colorButton("Naranja",QColor(230,126,34));
+    colorButton("Verde",QColor(124,179,66));colorButton("Azul",QColor(0,172,193));
+    colorButton("Cian",QColor(52,152,219));colorButton("Rosa",QColor(216,27,96));
+    paletteAction->setDefaultWidget(paletteWidget);menu.addAction(paletteAction);
     auto *chosen = menu.exec(globalPos);
     if (chosen == add) emit addCountdownRequested();
     else if (chosen == addMedia) emit addMultimediaRequested();
@@ -117,6 +162,8 @@ void WidgetContainer::showActionsMenu(QWidget *action, QPoint globalPos) {
     else if (chosen == cut) copyAction(true);
     else if (chosen == paste) pasteAction();
     else if (chosen == remove) deleteAction();
+    else if (chosen == selectAll) selectAllActions();
+    else if (chosen == deselectAll) selectAction(nullptr);
     else if (chosen == up && selected) moveWidget(selected,contentsLayout->indexOf(selected)-1);
     else if (chosen == down && selected) moveWidget(selected,contentsLayout->indexOf(selected)+2);
     else if (chosen == properties) {
@@ -164,7 +211,7 @@ void WidgetContainer::addWidget(QWidget *widget) {
 }
 void WidgetContainer::removeWidget(QWidget *widget) {
     if (!widget || contentsLayout->indexOf(widget) < 0) return;
-    if (widget == selected) selectCountdown(nullptr);
+    setActionSelected(widget,false);
     contentsLayout->removeWidget(widget);
     widget->hide();
     widget->setParent(nullptr);
@@ -179,14 +226,33 @@ Countdown *WidgetContainer::selectedCountdown() const { return qobject_cast<Coun
 void WidgetContainer::selectCountdown(Countdown *countdown, bool updateText) { selectAction(countdown,updateText); }
 void WidgetContainer::selectAction(QWidget *countdown, bool updateText) {
     if (countdown && contentsLayout->indexOf(countdown) < 0) return;
-    if (selected == countdown) { if (auto *timer=qobject_cast<Countdown *>(countdown);timer && updateText)timer->showTime(); return; }
-    auto refresh = [](QWidget *item, bool active) {
-        if (!item) return;
-        item->setProperty("selected",active); item->style()->unpolish(item); item->style()->polish(item); item->update();
-    };
-    refresh(selected,false); selected = countdown; refresh(selected,true);
-    emit selectionChanged();
+    const auto previous=selection;
+    for(const auto &entry:previous)if(entry)setActionSelected(entry,false);
+    selected.clear();selection.clear();
+    if(countdown)setActionSelected(countdown,true);
     if (auto *timer=qobject_cast<Countdown *>(countdown);timer && updateText)timer->showTime();
+}
+void WidgetContainer::setActionSelected(QWidget *action,bool active) {
+    if(!action)return;
+    selection.removeAll(QPointer<QWidget>());
+    if(active){if(!selection.contains(action))selection.append(action);selected=action;}
+    else {selection.removeAll(action);if(selected==action)selected=selection.isEmpty()?nullptr:selection.last().data();}
+    action->setProperty("selected",active);action->style()->unpolish(action);action->style()->polish(action);action->update();
+    emit selectionChanged();
+}
+void WidgetContainer::selectAllActions() {
+    for(auto *entry:widgetsInOrder())setActionSelected(entry,true);
+}
+void WidgetContainer::setActionColor(QWidget *action,const QString &value) {
+    if(!action || contentsLayout->indexOf(action)<0)return;
+    const QColor color(value);
+    action->setProperty("playerColor",color.isValid()?color.name():QString());
+    if(!color.isValid()){action->setStyleSheet(QString());return;}
+    const QColor base("#181e2c");
+    auto tint=[&](qreal amount){return QColor(qRound(base.red()*(1-amount)+color.red()*amount),
+        qRound(base.green()*(1-amount)+color.green()*amount),qRound(base.blue()*(1-amount)+color.blue()*amount)).name();};
+    action->setStyleSheet(QString("#%1 { background: %2; } #%1[selected=\"true\"] { background: %3; }")
+        .arg(action->objectName(),tint(.22),tint(.36)));
 }
 void WidgetContainer::moveCountdown(Countdown *countdown, int insertionIndex) {
     moveWidget(countdown,insertionIndex);
@@ -214,6 +280,7 @@ bool WidgetContainer::copyAction(bool cut) {
     else if(auto *media=qobject_cast<Multimedia *>(selected.data()))
         actionClipboard = QJsonObject{{"version",1},{"type","multimedia"},{"name",media->name()},{"file",media->filePath()},{"loop",media->loops()},{"purge",media->purges()},{"next",media->playsNext()},{"mix",media->mixes()},{"cut",cut}};
     else return false;
+    actionClipboard["color"]=selected->property("playerColor").toString();
     if (cut) deleteAction();
     return true;
 }
@@ -223,8 +290,10 @@ void WidgetContainer::pasteAction() {
     if (!clipboardAction(&root)) return;
     int index = selected ? contentsLayout->indexOf(selected)+1 : widgetCount();
     QString name = root["name"].toString() + (root["cut"].toBool() ? QString() : QString(" (copia)"));
+    const auto previous=selected;
     if(root["type"]=="multimedia")emit pasteMultimediaRequested(name,root["file"].toString(),root["loop"].toBool(false),index,root["purge"].toBool(),root["next"].toBool(),root["mix"].toBool());
     else emit pasteCountdownRequested(name,root["seconds"].toInt(),root["textId"].toString(),index,root["format"].toString("MM:SS.C"),root["totalTextId"].toString());
+    if(selected && selected!=previous)setActionColor(selected,root["color"].toString());
 }
 void WidgetContainer::deleteAction() {
     if (!allowCountdown || !selected) return;
@@ -275,8 +344,10 @@ bool WidgetContainer::eventFilter(QObject *watched, QEvent *event) {
     if (event->type() == QEvent::MouseButtonPress) {
         auto *mouse = static_cast<QMouseEvent *>(event);
         if (mouse->button() == Qt::LeftButton) {
-            selectAction(item, true);
-            pressed = (qobject_cast<QAbstractButton *>(surface) || qobject_cast<QAbstractSlider *>(surface)) ? nullptr : item;
+            const bool control=qobject_cast<QAbstractButton *>(surface) || qobject_cast<QAbstractSlider *>(surface);
+            if(item && mouse->modifiers().testFlag(Qt::ControlModifier))setActionSelected(item,!selection.contains(item));
+            else if(!control || !selection.contains(item))selectAction(item,true);
+            pressed = control ? nullptr : item;
             dragStart = mouse->globalPosition().toPoint();
             if (pressed) {
                 pressed->setFocus(Qt::MouseFocusReason);

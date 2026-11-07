@@ -1,4 +1,5 @@
 /* Selectors for Sessions-specific controls. The original radit.qss is unchanged. */
+QLabel[mediaRemaining="true"] { background: transparent; border: none; color: #80a4ae; font-size: 18px; font-weight: bold; padding: 0; }
 #CompositionZoomBar { background: transparent; border: none; }
 #CompositionZoomBar QToolButton { background: transparent; border: 1px solid #535b6a; padding: 2px; }
 #CompositionZoomBar QToolButton:hover { border-color: #80a4ae; background: transparent; }
@@ -31,6 +32,13 @@ QDialog#FadeOptions { background: #181e2c; border: 1px solid #333b4f; }
 #Multimedia QPushButton:hover { background: #30384b; border-color: #80a4ae; }
 #Multimedia QPushButton:disabled { color: #686b74; border-color: #333b4f; }
 #Multimedia QPushButton:checked { background: #39385b; border-color: #80a4ae; color: white; }
+#Multimedia QPushButton#multimediaNext:checked,
+#Multimedia QPushButton#multimediaPurge:checked,
+#Multimedia QPushButton#multimediaLoop:checked,
+#Multimedia QPushButton#multimediaMix:checked,
+#Multimedia QPushButton#multimediaPlay[transportActive="true"],
+#Multimedia QPushButton#multimediaCue[transportActive="true"],
+#Multimedia QPushButton#multimediaPause[transportActive="true"] { background: #29483f; border-color: #80ffd2; color: #80ffd2; }
 #Multimedia QPushButton#multimediaLoop { padding: 2px; }
 #Multimedia QPushButton[thumbnail="true"] { padding: 2px; background: #181e2c; border: 1px solid #686b74; }
 #Multimedia QPushButton[thumbnail="true"]:hover { border-color: #80a4ae; background: #262c3b; }

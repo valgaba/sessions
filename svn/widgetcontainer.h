@@ -22,6 +22,7 @@ public:
     Countdown *selectedCountdown() const;
     QWidget *selectedAction() const { return selected.data(); }
     void selectAction(QWidget *action, bool updateText = false);
+    void setActionColor(QWidget *action, const QString &color);
     void selectCountdown(Countdown *countdown, bool updateText = false);
     void moveCountdown(Countdown *countdown, int insertionIndex);
     void moveWidget(QWidget *widget, int insertionIndex);
@@ -44,11 +45,14 @@ protected:
 private:
     void showAddMenu(QPoint globalPos);
     void showActionsMenu(QWidget *action, QPoint globalPos);
+    void setActionSelected(QWidget *action, bool active);
+    void selectAllActions();
     int insertionIndexAt(int y) const;
     void showDropLine(int index);
     QVBoxLayout *contentsLayout;
     bool allowCountdown = true;
     QPointer<QWidget> selected;
+    QList<QPointer<QWidget>> selection;
     QPointer<QWidget> dragged;
     QPointer<QWidget> pressed;
     QPoint dragStart;

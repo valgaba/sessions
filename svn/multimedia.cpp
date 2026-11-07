@@ -241,7 +241,7 @@ Multimedia::Multimedia(QWidget *parent):QWidget(parent) {
     loopButton->setToolTip("Loop · Repetir al terminar");loopButton->setAccessibleName("Loop");
     cueButton=new QPushButton(QIcon(":/icons/PlayCue.svg"),"Cue");cueButton->setObjectName("multimediaCue");cueButton->setEnabled(false);cueButton->setToolTip("Cue · Preescucha / composición");cueButton->setAccessibleName("Cue");
     purgeButton=new QPushButton(QIcon(":/icons/Purge.svg"),QString());purgeButton->setObjectName("multimediaPurge");purgeButton->setCheckable(true);purgeButton->setToolTip("Purge · Eliminar la acción al terminar");purgeButton->setAccessibleName("Purge");
-    nextButton=new QPushButton(QIcon(":/icons/Next.svg"),QString());nextButton->setObjectName("multimediaNext");nextButton->setCheckable(true);nextButton->setToolTip("Next · Reproducir cuando termine el anterior");nextButton->setAccessibleName("Next");
+    nextButton=new QPushButton(QIcon(":/icons/Next.svg"),QString());nextButton->setObjectName("multimediaNext");nextButton->setCheckable(true);nextButton->setToolTip("Next · Incluir en el avance automático hacia abajo, continuando desde arriba al llegar al final");nextButton->setAccessibleName("Next");
     mixButton=new QPushButton("Mix");mixButton->setObjectName("multimediaMix");mixButton->setCheckable(true);mixButton->setToolTip("Mix · Permitir mezclar este contenido al pulsar Play");
     header->setSpacing(3);
     for(auto *button:{mixButton,nextButton,purgeButton,loopButton}) {
@@ -258,6 +258,7 @@ Multimedia::Multimedia(QWidget *parent):QWidget(parent) {
     loadingBar->setRange(0,0);loadingBar->setTextVisible(false);loadingBar->setFixedHeight(8);
     loadingBar->setToolTip("Cargando archivo…");loadingBar->setAccessibleName("Cargando multimedia");loadingBar->hide();layout->addWidget(loadingBar);
     slider=new Slider;slider->setObjectName("multimediaSlider");slider->setFixedHeight(26);slider->setEnabled(false);
+    slider->setRange(0,100000);slider->setSingleStep(100);slider->setPageStep(1000);
     auto *timeline=new QHBoxLayout;timeline->setSpacing(8);timeline->addWidget(slider,1);timeline->addWidget(time);layout->addLayout(timeline);
     playButton->setEnabled(false);pauseButton->setEnabled(false);stopButton->setEnabled(false);
     connect(playButton,&QPushButton::clicked,this,&Multimedia::play);
@@ -272,9 +273,19 @@ Multimedia::Multimedia(QWidget *parent):QWidget(parent) {
     connect(slider,&QSlider::sliderReleased,this,[this]{seek(duration()*slider->value()/slider->maximum());});
     connect(slider,&QSlider::actionTriggered,this,[this](int){if(!slider->isSliderDown())QTimer::singleShot(0,this,[this]{seek(duration()*slider->value()/slider->maximum());});});
     poll.setInterval(100);connect(&poll,&QTimer::timeout,this,&Multimedia::updatePlayback);
+    timelineTimer.setInterval(16);timelineTimer.setTimerType(Qt::PreciseTimer);
+    connect(&timelineTimer,&QTimer::timeout,this,&Multimedia::updateTimeline);
     setToolTip("Botón derecho: archivo y propiedades de Multimedia");
 }
-Multimedia::~Multimedia() { thumbnailProbe.reset();poll.stop(); playback.reset(); }
+Multimedia::~Multimedia() { thumbnailProbe.reset();poll.stop();timelineTimer.stop(); playback.reset(); }
+void Multimedia::setTransportActive(QPushButton *active) {
+    for(auto *button:{playButton,cueButton,pauseButton}) {
+        const bool enabled=button==active;
+        if(button->property("transportActive").toBool()==enabled)continue;
+        button->setProperty("transportActive",enabled);
+        button->style()->unpolish(button);button->style()->polish(button);button->update();
+    }
+}
 void Multimedia::setLoading(bool loading) {
     loadingBar->setVisible(loading);
     loadingBar->setAccessibleDescription(loading?"Preparando el archivo":"Archivo preparado");
@@ -292,25 +303,31 @@ void Multimedia::updateThumbnail(const QImage &image) {
     painter.end();playButton->setIcon(QIcon(preview));
 }
 bool Multimedia::backendAvailable(){return vlc().ready;}
-void Multimedia::warmUpBackend() {
+void Multimedia::warmUpBackend(const std::function<void(int,const QString &)> &progress) {
+    const auto report=[&](int phase,const QString &text){if(progress)progress(phase,text);};
+    report(0,"Cargando LibVLC…");
+    auto &api=vlc();
+    if(!api.ready){report(5,"Motor multimedia no disponible");return;}
+    report(1,"Preparando plugins…");
     // Keep an instance alive so VLC retains its plugin registry after startup.
     static MediaPlayback warmup;
-    if(!warmup.player)return;
+    if(!warmup.player){report(5,warmup.instance?"Motor multimedia preparado":"No se pudo preparar multimedia");return;}
+    report(2,"Preparando decodificador…");
     QFile clip(":/media/warmup.mp4");
     QTemporaryFile file(QDir::tempPath()+"/sessions-warmup-XXXXXX.mp4");
-    if(!clip.open(QIODevice::ReadOnly) || !file.open())return;
+    if(!clip.open(QIODevice::ReadOnly) || !file.open()){report(5,"Motor preparado; vídeo de precarga no disponible");return;}
     const QByteArray bytes=clip.readAll();
-    if(file.write(bytes)!=bytes.size())return;
+    if(file.write(bytes)!=bytes.size()){report(5,"Motor preparado; vídeo de precarga no disponible");return;}
     const QString filename=file.fileName();file.close();
-    auto &api=vlc();
     auto *media=api.newMedia(warmup.instance,QDir::toNativeSeparators(filename).toUtf8().constData());
-    if(!media)return;
+    if(!media){report(5,"Motor preparado; vídeo de precarga no disponible");return;}
     api.mediaOption(media,":no-audio");api.mediaOption(media,":no-spu");
     api.mediaOption(media,":demux=avformat");api.mediaOption(media,":avcodec-threads=1");
     api.setMedia(warmup.player,media);api.releaseMedia(media);api.mute(warmup.player,1);
     VideoFrames frames;frames.maximumSize=QSize(32,32);frames.notify=[]{};
     api.setCallbacks(warmup.player,VideoFrames::lock,VideoFrames::unlock,VideoFrames::display,&frames);
     api.setFormat(warmup.player,VideoFrames::format,nullptr);
+    report(3,"Preparando vídeo…");
     if(api.play(warmup.player)==0) {
         QElapsedTimer deadline;deadline.start();
         while(!frames.queued && deadline.elapsed()<3000) {
@@ -319,8 +336,10 @@ void Multimedia::warmUpBackend() {
             QThread::msleep(20);
         }
     }
+    report(4,"Finalizando precarga…");
     // Release callbacks before their local frame buffer goes out of scope.
     api.stop(warmup.player);api.releasePlayer(warmup.player);warmup.player=nullptr;
+    report(5,frames.queued?"Multimedia preparado":"Inicialización multimedia finalizada");
 }
 QList<AudioOutputDevice> Multimedia::audioDevices() {
     QList<AudioOutputDevice> devices;
@@ -419,11 +438,14 @@ void Multimedia::applyAudioVolume(int volume) {
 bool Multimedia::purges() const {return purgeButton->isChecked();}
 bool Multimedia::playsNext() const {return nextButton->isChecked();}
 bool Multimedia::mixes() const {return mixButton->isChecked();}
-void Multimedia::setPurge(bool enabled){purgeButton->setChecked(enabled);}
+void Multimedia::setPurge(bool enabled){purgeButton->setChecked(enabled && !imageMode);}
 void Multimedia::setNext(bool enabled){nextButton->setChecked(enabled);}
 void Multimedia::setMix(bool enabled){mixButton->setChecked(enabled);}
 bool Multimedia::isImageFile(const QString &file) {
     return QImageReader::supportedImageFormats().contains(QFileInfo(file).suffix().toLower().toLatin1());
+}
+bool Multimedia::isAudioOnly() const {
+    return QStringList{"mp3","wav","flac","ogg","opus","aac","m4a","wma","aif","aiff"}.contains(QFileInfo(path).suffix().toLower());
 }
 // Loop only applies to media with a timeline; still images stay visible until stopped.
 void Multimedia::setLoop(bool enabled) {
@@ -432,6 +454,31 @@ void Multimedia::setLoop(bool enabled) {
     looping=active;
 }
 qint64 Multimedia::position() const {return finished?finishedTime:playback && playback->player?qMax(qint64(0),vlc().getTime(playback->player)):0;}
+qint64 Multimedia::displayPosition() const {
+    // VLC publishes its clock in coarse steps. Interpolate only the display;
+    // playback, seeking and end detection keep using the real player clock.
+    const qint64 sample=seeking?seekTarget:qMax(position(),shownPosition);
+    if(finished || imageMode || seeking || !isPlaying()) {
+        displayTick.invalidate();return finished?finishedTime:sample;
+    }
+    if(!displayTick.isValid()) {
+        displaySample=sample;displayTime=sample;displayCorrection=0;displayTick.start();
+    } else {
+        const qint64 elapsed=displayTick.restart();
+        displayTime+=elapsed;
+        if(sample!=displaySample) {
+            if(qAbs(sample-displaySample)>1000 || qAbs(sample-displayTime)>1000) {
+                displayTime=sample;displayCorrection=0;
+            } else displayCorrection=sample-displayTime;
+            displaySample=sample;
+        }
+        const qreal correction=qBound(-elapsed*0.2,displayCorrection,elapsed*0.2);
+        displayTime+=correction;displayCorrection-=correction;
+        // A stalled player must not let the visual clock run indefinitely.
+        displayTime=qBound(qreal(sample),displayTime,qreal(sample+500));
+    }
+    return qBound(qint64(0),qint64(displayTime),duration());
+}
 qint64 Multimedia::duration() const {
     if(playback && playback->player)knownDuration=qMax(knownDuration,vlc().getLength(playback->player));
     return knownDuration;
@@ -447,6 +494,8 @@ void Multimedia::configure(const QString &name,const QString &file) {
     imageMode=isImageFile(path);
     pauseButton->setVisible(!imageMode);slider->setVisible(!imageMode);time->setVisible(!imageMode);
     loopButton->setVisible(!imageMode);
+    purgeButton->setVisible(!imageMode);
+    if(imageMode)purgeButton->setChecked(false);
     if(imageMode && loopButton->isChecked())loopButton->setChecked(false);
     loopButton->setEnabled(!imageMode && QFileInfo(path).isFile());
     title->setText(mediaName);title->setToolTip(mediaName);
@@ -463,7 +512,6 @@ void Multimedia::configure(const QString &name,const QString &file) {
         if(!QFileInfo(path).isFile() || playback) {
             preparingFile=false;pendingTransport=0;setLoading(false);return;
         }
-        const QSet<QString> audio{"mp3","wav","flac","ogg","opus","aac","m4a","wma","aif","aiff"};
         thumbnailProbe=std::make_unique<ThumbnailProbe>([this](const QImage &image,qint64 total){
             if(!image.isNull())updateThumbnail(image);
             knownDuration=qMax(knownDuration,total);updateTime(0,knownDuration);
@@ -475,13 +523,12 @@ void Multimedia::configure(const QString &name,const QString &file) {
                 if(requested==1)play();else if(requested==2)cue();
             });
         });
-        thumbnailProbe->start(path,audio.contains(QFileInfo(path).suffix().toLower()),imageMode);
+        thumbnailProbe->start(path,isAudioOnly(),imageMode);
     });
     layout()->activate();updateGeometry();
     emit configurationChanged();
 }
 bool Multimedia::startPlayback() {
-    setLoading(true);
     if(qEnvironmentVariableIsSet("SESSIONS_MEDIA_TRACE"))std::fprintf(stderr,"SESSIONS start cue=%d playing=%d finished=%d\n",cueMode,isPlaying(),finished);
     if(!QFileInfo(path).isFile()){setLoading(false);status->setText("Archivo no encontrado");return false;}
     if(imageMode) {
@@ -516,26 +563,27 @@ bool Multimedia::startPlayback() {
         audioDeviceApplied=false;appliedAudioDevice.clear();
         audioVolumeApplied=false;appliedVolume=-1;
     }
-    const bool audioOnly=QStringList{"mp3","wav","flac","ogg","opus","aac","m4a","wma","aif","aiff"}.contains(QFileInfo(path).suffix().toLower());
+    const bool audioOnly=isAudioOnly();
     vlc().mute(playback->player,cueMode && !audioOnly?1:0);
-    if(finished){vlc().stop(playback->player);finished=false;finishedTime=0;shownPosition=0;seeking=false;awaitingFreshFrame=true;slider->setValue(slider->minimum());updateTime(0,duration());}
+    if(finished){displayTick.invalidate();vlc().stop(playback->player);finished=false;finishedTime=0;shownPosition=0;seeking=false;awaitingFreshFrame=true;slider->setValue(slider->minimum());updateTime(0,duration());}
     applyAudioDevice(cueMode?compositionAudioDevice:outputAudioDevice);
     applyAudioVolume(cueMode?compositionVolume:outputVolume);
     acceptFrames=true;
     if(!isPlaying() && vlc().play(playback->player)<0){setLoading(false);acceptFrames=false;status->setText("Error al reproducir");return false;}
-    status->setText("Cargando…");playButton->setEnabled(cueMode);stopButton->setEnabled(true);poll.start();
+    status->setText("Cargando…");playButton->setEnabled(cueMode);stopButton->setEnabled(true);poll.start();timelineTimer.start();
     return true;
 }
 // Restart the same media without leaving the output, so a looping action never
 // freezes on its last frame and the other composition elements stay in place.
 void Multimedia::restartForLoop() {
+    displayTick.invalidate();
     if(!playback || !playback->player)return;
     if(qEnvironmentVariableIsSet("SESSIONS_MEDIA_TRACE"))std::fprintf(stderr,"SESSIONS loop restart\n");
     const qint64 total=duration();
     vlc().stop(playback->player);
     finished=false;finishedTime=0;shownPosition=0;seeking=false;acceptFrames=true;awaitingFreshFrame=true;
     slider->setValue(slider->minimum());updateTime(0,total);poll.start();
-    if(vlc().play(playback->player)<0){acceptFrames=false;status->setText("Error al reproducir");poll.stop();return;}
+    if(vlc().play(playback->player)<0){acceptFrames=false;status->setText("Error al reproducir");poll.stop();timelineTimer.stop();return;}
     status->setText(cueMode?"En composición":"En marcha");
 }
 void Multimedia::play() {
@@ -543,14 +591,15 @@ void Multimedia::play() {
     pendingTransport=0;
     thumbnailProbe.reset();
     cueMode=false;
-    if(startPlayback())emit playRequested();
+    if(startPlayback()){setTransportActive(playButton);setNext(false);emit playRequested();}
+    else setTransportActive(nullptr);
 }
 void Multimedia::cue() {
     if(preparingFile){pendingTransport=2;setLoading(true);return;}
     pendingTransport=0;
     thumbnailProbe.reset();
     stopPlayback(false);playback.reset();frames.reset();lastFrame=QImage();firstFrame=QImage();cueMode=true;emit cueRequested();
-    startPlayback();
+    setTransportActive(startPlayback()?cueButton:nullptr);
 }
 void Multimedia::receiveFrame() {
     if(!frames || !playback)return;
@@ -563,18 +612,21 @@ void Multimedia::receiveFrame() {
     emit frameReady(lastFrame);
 }
 void Multimedia::pause(){
-    if(imageMode){imageActive=false;playButton->setEnabled(QFileInfo(path).isFile());status->setText("Detenido");return;}
-    if(isPlaying()){vlc().pause(playback->player,1);QTimer::singleShot(50,this,&Multimedia::updatePlayback);}
+    displayTick.invalidate();
+    if(imageMode){imageActive=false;setTransportActive(nullptr);playButton->setEnabled(QFileInfo(path).isFile());status->setText("Detenido");return;}
+    if(isPlaying()){vlc().pause(playback->player,1);setTransportActive(pauseButton);QTimer::singleShot(50,this,&Multimedia::updatePlayback);}
 }
 void Multimedia::stop(){
     stopPlayback(true);
 }
 void Multimedia::stopPlayback(bool clearOutput){
+    displayTick.invalidate();
+    setTransportActive(nullptr);
     pendingTransport=0;
     setLoading(false);
     duration(); // Retain metadata before VLC releases its input.
     cueMode=false;imageActive=false;finished=false;finishedTime=0;acceptFrames=false;awaitingFreshFrame=true;shownPosition=0;seeking=false;
-    poll.stop();if(playback && playback->player)vlc().stop(playback->player);
+    poll.stop();timelineTimer.stop();if(playback && playback->player)vlc().stop(playback->player);
     if(clearOutput){playback.reset();frames.reset();}
     playButton->setEnabled(QFileInfo(path).isFile());pauseButton->setEnabled(false);stopButton->setEnabled(false);
     loopButton->setEnabled(!imageMode && QFileInfo(path).isFile());
@@ -584,16 +636,21 @@ void Multimedia::stopPlayback(bool clearOutput){
 void Multimedia::seek(qint64 milliseconds){
     if(qEnvironmentVariableIsSet("SESSIONS_MEDIA_TRACE"))std::fprintf(stderr,"SESSIONS seek target=%lld\n",static_cast<long long>(milliseconds));
     if(finished || !playback || !playback->player || !vlc().seekable(playback->player))return;
+    displayTick.invalidate();
     seekTarget=qBound(qint64(0),milliseconds,duration());shownPosition=seekTarget;seeking=true;seekWait.start();
     vlc().setTime(playback->player,seekTarget);updatePlayback();
 }
 void Multimedia::updateTime(qint64 current,qint64 total){time->setText(clockTime(current)+" / "+clockTime(total));}
+void Multimedia::updateTimeline() {
+    if(slider->isSliderDown())return;
+    const qint64 total=duration(),current=displayPosition();
+    slider->setValue(total>0?int(qMin(current,total)*slider->maximum()/total):0);
+    updateTime(current,total);
+}
 void Multimedia::updatePlayback(){
     if(!playback || !playback->player)return;
     if(finished)return;
     int state=vlc().getState(playback->player);qint64 total=duration(),current=position();
-    if(state==1 || state==2)setLoading(true);
-    else if(state>=3)setLoading(false);
     if(cueMode && state==3 && !hasVideo())vlc().mute(playback->player,0);
     // End-of-file may reset VLC's clock/length before its terminal state is read.
     // Rewind only on an explicit seek/Stop or once completion is confirmed.
@@ -609,14 +666,15 @@ void Multimedia::updatePlayback(){
         vlc().stop(playback->player);
     } else if(state==3 || state==4) current=qMax(current,shownPosition);
     shownPosition=current;
-    if(!slider->isSliderDown()) {
-        slider->setValue(total>0?int(qMin(current,total)*slider->maximum()/total):0);
-        updateTime(current,total);
-    }
+    updateTimeline();
     slider->setEnabled(total>0 && (state==3 || state==4) && vlc().seekable(playback->player));
     playButton->setEnabled((cueMode && state==3) || (state!=1 && state!=2 && state!=3));pauseButton->setEnabled(state==3);stopButton->setEnabled(state==1 || state==2 || state==3 || state==4 || state==6);
     status->setText(state==3?(cueMode?"En composición":"En marcha"):state==4?"En pausa":state==6?"Finalizado":state==7?"Error de reproducción":state==1 || state==2?"Cargando…":"Detenido");
     if(state==6 || state==7 || state==5)poll.stop();
+    if(state==4 || state==5 || state==6 || state==7)timelineTimer.stop();
+    if(state==3)setTransportActive(cueMode?cueButton:playButton);
+    else if(state==4)setTransportActive(pauseButton);
+    else if(state==5 || state==6 || state==7)setTransportActive(nullptr);
     if(finished) {
         emit playbackFinished();
     }

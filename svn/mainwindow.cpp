@@ -16,6 +16,7 @@
 #include <QScreen>
 #include <QWindow>
 #include <QStandardPaths>
+#include <QScopedValueRollback>
 #include <functional>
 #include <cmath>
 
@@ -93,6 +94,19 @@ MainWindow::MainWindow() {
     outputVolumeText->setObjectName("outputVolumeText");
     outputVolumeText->setFixedWidth(40);
     outputVolumeText->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+    auto makeRemaining=[](const char *name,const QString &description){
+        auto *label=new QLabel("00:00:00.00");label->setObjectName(name);
+        label->setProperty("mediaRemaining",true);
+        label->setAlignment(Qt::AlignCenter);
+        QFont font=label->font();font.setPixelSize(18);font.setBold(true);label->setFont(font);
+        label->setMinimumWidth(QFontMetrics(font).horizontalAdvance("00:00:00.00")+4);
+        label->setToolTip(description);label->setAccessibleName(description);
+        return label;
+    };
+    compositionRemaining=makeRemaining("compositionRemaining","Tiempo restante del Multimedia en composición (Cue)");
+    outputRemaining=makeRemaining("outputRemaining","Tiempo restante del Multimedia en salida (Play)");
+    auto *remainingTimer=new QTimer(this);remainingTimer->setInterval(10);remainingTimer->setTimerType(Qt::PreciseTimer);
+    connect(remainingTimer,&QTimer::timeout,this,&MainWindow::updateRemainingTimes);remainingTimer->start();
     compositionVuMeter=new VuMeter;
     compositionVuMeter->setObjectName("compositionVuMeter");
     compositionVuMeter->setToolTip("Nivel de audio del dispositivo de composición");
@@ -122,6 +136,8 @@ MainWindow::MainWindow() {
     auto *compositionHeader = new QHBoxLayout;
     compositionHeader->setSpacing(4);
     compositionHeader->addWidget(new QLabel("COMPOSICIÓN  ·  1280 × 720"));
+    compositionHeader->addStretch();
+    compositionHeader->addWidget(compositionRemaining);
     compositionHeader->addStretch();
     compositionHeader->addWidget(compositionVolume);
     compositionHeader->addWidget(compositionVolumeText);
@@ -158,6 +174,8 @@ MainWindow::MainWindow() {
     auto *outputHeader = new QHBoxLayout;
     outputHeader->setSpacing(4);
     outputHeader->addWidget(new QLabel("SALIDA  ·  1280 × 720"));
+    outputHeader->addStretch();
+    outputHeader->addWidget(outputRemaining);
     outputHeader->addStretch();
     outputHeader->addWidget(outputVolume);
     outputHeader->addWidget(outputVolumeText);
@@ -241,7 +259,7 @@ MainWindow::MainWindow() {
             auto *actions = new QWidget; actions->setObjectName("ActionsPanel");
             actions->setAcceptDrops(true);actions->installEventFilter(container);
             auto *layout = new QVBoxLayout(actions); layout->setContentsMargins(0,0,0,0); layout->setSpacing(0);
-            auto *title = new QLabel("Acciones"); title->setObjectName("ActionsTitle"); layout->addWidget(title);
+            auto *title = new QLabel("Player"); title->setObjectName("ActionsTitle"); layout->addWidget(title);
             layout->addWidget(container,1);
             bottomPanels->addWidget(actions);
         } else bottomPanels->addWidget(container);
@@ -380,7 +398,7 @@ MainWindow::~MainWindow() {
         if (auto *item = dynamic_cast<CanvasItem *>(base)) disconnect(item, nullptr, this, nullptr);
 }
 void MainWindow::launchComposition() {
-    const QImage previous=pendingMediaFade && fadeDurationMs>0?captureOutput():QImage();
+    const QImage previous=fadeDurationMs>0?captureOutput():QImage();
     pendingMediaFade=false;cancelOutputFade();
     outputScene->clear();
     for (auto *base : canvas->items(Qt::AscendingOrder)) {
@@ -420,7 +438,7 @@ void MainWindow::showFadeOptions() {
     auto *seconds=new QDoubleSpinBox;seconds->setObjectName("fadeSeconds");seconds->setRange(0,10);seconds->setDecimals(2);seconds->setSingleStep(0.1);seconds->setSuffix(" s");seconds->setValue(fadeDurationMs/1000.0);
     seconds->setButtonSymbols(QAbstractSpinBox::NoButtons);
     form->addRow("Duración:",seconds);groupLayout->addLayout(form);
-    auto *hint=new QLabel("Fundido al cambiar de vídeo o imagen y al pulsar Stop.\n0 s aplica el cambio inmediato.");hint->setWordWrap(true);groupLayout->addWidget(hint);layout->addWidget(group);
+    auto *hint=new QLabel("Fundido al lanzar la composición, cambiar de vídeo o imagen y al pulsar Stop.\n0 s aplica el cambio inmediato.");hint->setWordWrap(true);groupLayout->addWidget(hint);layout->addWidget(group);
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);layout->addWidget(buttons);
     buttons->button(QDialogButtonBox::Ok)->setText("Aceptar");buttons->button(QDialogButtonBox::Cancel)->setText("Cancelar");
     dialog.setMinimumWidth(420);root->setSizeConstraint(QLayout::SetFixedSize);
@@ -472,6 +490,19 @@ void MainWindow::updateVolumeTooltips() {
     if(outputVolume)outputVolume->setToolTip(QString("Volumen de salida (Play): %1 %").arg(outputVolumeValue));
     if(compositionVolumeText)compositionVolumeText->setText(QString::number(compositionVolumeValue)+" %");
     if(outputVolumeText)outputVolumeText->setText(QString::number(outputVolumeValue)+" %");
+}
+void MainWindow::updateRemainingTimes() {
+    auto remaining=[](Multimedia *media){
+        qint64 milliseconds=0;
+        if(media && !media->isStillImage() && !media->isFinished())
+            milliseconds=qMax(qint64(0),media->duration()-media->displayPosition());
+        const qint64 cs=milliseconds/10;
+        return QString("%1:%2:%3.%4").arg(cs/360000,2,10,QLatin1Char('0'))
+            .arg(cs/6000%60,2,10,QLatin1Char('0')).arg(cs/100%60,2,10,QLatin1Char('0'))
+            .arg(cs%100,2,10,QLatin1Char('0'));
+    };
+    compositionRemaining->setText(remaining(previewMedia.data()));
+    outputRemaining->setText(remaining(activeMedia.data()));
 }
 void MainWindow::updateAudioActivity() {
     bool composition=false, output=false;
@@ -596,10 +627,10 @@ Countdown *MainWindow::createCountdown(const QString &name, int seconds, const Q
 }
 CanvasItem *MainWindow::prepareVideo(Multimedia *media,const QImage &frame) {
     if(frame.isNull())return nullptr;
-    for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id){item->setVideoFrame(frame);item->setVisible(previewMedia==media);return item;}
+    for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id){item->setVideoFrame(frame);item->setVisible(previewMedia==media && media->isCue());return item;}
     auto *item=new CanvasItem(frame);item->mediaId=media->id;item->name=media->name();item->setItemSize(canvas->sceneRect().size());
     qreal lowest=0;for(auto *base:canvas->items())lowest=qMin(lowest,base->zValue());item->setZValue(lowest-1);
-    item->setVisible(previewMedia==media);
+    item->setVisible(previewMedia==media && media->isCue());
     return addItem(item,canvas->sceneRect().topLeft(),false,false);
 }
 Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file,const QString &id,bool loop) {
@@ -615,6 +646,7 @@ Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file
     connect(media,&Multimedia::playbackStopped,this,hideCompositionVideo);
     connect(media,&Multimedia::cueRequested,this,[this,media,selectPreview]{outputMedia.removeAll(media);if(activeMedia==media){activeMedia.clear();pendingMediaFade=false;}selectPreview();});
     connect(media,&Multimedia::playbackStopped,this,[this,media]{
+        if(replacingMedia)return; // Retain the outgoing frame until the replacement is ready.
         bool present=false;
         for(auto *base:outputScene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id)present=true;
         const QImage previous=present && fadeDurationMs>0?captureOutput():QImage();
@@ -635,7 +667,12 @@ Multimedia *MainWindow::createMultimedia(const QString &name,const QString &file
         if(media->isCue() || !media->isFinished())return;
         const auto ordered=bottom->widgetsInOrder();const int index=ordered.indexOf(media);
         QPointer<Multimedia> next;
-        for(int i=index+1;index>=0 && i<ordered.size();++i)if(auto *candidate=qobject_cast<Multimedia *>(ordered[i])) {if(candidate->playsNext())next=candidate;break;}
+        // Search downwards for an armed action, wrapping to the top once.
+        // Exclude the finished action itself; repeating it belongs to Loop.
+        for(int offset=1;index>=0 && offset<ordered.size();++offset) {
+            auto *candidate=qobject_cast<Multimedia *>(ordered[(index+offset)%ordered.size()]);
+            if(candidate && candidate->playsNext()){next=candidate;break;}
+        }
         if(next)next->play();
         if(media->purges()) {
             outputMedia.removeAll(media);if(activeMedia==media)activeMedia.clear();if(previewMedia==media)previewMedia.clear();
@@ -648,13 +685,19 @@ void MainWindow::launchMedia(Multimedia *media,bool mix) {
     outputMedia.removeAll(QPointer<Multimedia>());
     if(!mix) {
         if(activeMedia!=media || outputMedia.size()>1)pendingMediaFade=true;
-        for(const auto &other:outputMedia)if(other && other!=media)other->pause();
+        const auto previous=outputMedia;
         outputMedia.clear();
+        QScopedValueRollback<bool> replacing(replacingMedia,true);
+        for(const auto &other:previous)if(other && other!=media)other->stop();
     }
     if(!outputMedia.contains(media))outputMedia.append(media);
-    activeMedia=media;previewMedia=media;
-    for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && !item->mediaId.isEmpty())item->setVisible(item->mediaId==media->id && !media->currentFrame().isNull());
-    if(media->hasCurrentFrame() && prepareVideo(media,media->currentFrame()))launchComposition();
+    activeMedia=media;
+    if(previewMedia==media)previewMedia.clear();
+    for(auto *base:canvas->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && item->mediaId==media->id)item->setVisible(false);
+    // Audio emits no video frames: start the outgoing visual fade now instead
+    // of waiting for frameReady, which only arrives for videos and images.
+    if(!mix && media->isAudioOnly())launchComposition();
+    else if(media->hasCurrentFrame() && prepareVideo(media,media->currentFrame()))launchComposition();
 }
 void MainWindow::balanceMediaLayers() {
     qreal highest=-1;for(auto *base:outputScene->items())if(auto *item=dynamic_cast<CanvasItem *>(base);item && !item->mediaId.isEmpty())highest=qMax(highest,item->zValue());
@@ -760,11 +803,11 @@ bool MainWindow::writeProject(const QString &path){
     QJsonArray widgets;
     for (int panel = 0; panel < countdownContainers.size(); ++panel)
         for (auto *base : countdownContainers[panel]->widgetsInOrder()) {
-            if (auto *media=qobject_cast<Multimedia *>(base))widgets.append(QJsonObject{{"type","multimedia"},{"id",media->id},{"name",media->name()},{"file",media->filePath()},{"loop",media->loops()},{"purge",media->purges()},{"next",media->playsNext()},{"mix",media->mixes()},{"panel",0}});
+            if (auto *media=qobject_cast<Multimedia *>(base))widgets.append(QJsonObject{{"type","multimedia"},{"id",media->id},{"name",media->name()},{"file",media->filePath()},{"loop",media->loops()},{"purge",media->purges()},{"next",media->playsNext()},{"mix",media->mixes()},{"color",base->property("playerColor").toString()},{"panel",0}});
             else if (auto *countdown = qobject_cast<Countdown *>(base))
             widgets.append(QJsonObject{{"type", "countdown"}, {"name", countdown->name()}, {"seconds", countdown->durationSeconds()}, {"panel",panel},
                 {"textId", countdown->associatedText() ? countdown->associatedText()->id : QString()},{"format",countdown->outputFormat()},
-                {"totalTextId",countdown->totalText()?countdown->totalText()->id:QString()}});
+                {"totalTextId",countdown->totalText()?countdown->totalText()->id:QString()},{"color",base->property("playerColor").toString()}});
         }
     QSaveFile file(path);if(!file.open(QIODevice::WriteOnly)){saveError=file.errorString();return false;}
     QJsonArray groups;
@@ -880,7 +923,11 @@ bool MainWindow::readProject(const QString &path){
             QString file=widget["file"].toString();if(!file.isEmpty() && QFileInfo(file).isRelative())file=QFileInfo(path).dir().absoluteFilePath(file);
             auto *media=createMultimedia(widget["name"].toString(),file,widget["id"].toString(),widget["loop"].toBool(false));
             media->setPurge(widget["purge"].toBool());media->setNext(widget["next"].toBool());media->setMix(widget["mix"].toBool());
-        } else createCountdown(widget["name"].toString(), widget["seconds"].toInt(60), widget["textId"].toString(),true,widget["format"].toString("MM:SS.C"),widget["totalTextId"].toString());
+            bottom->setActionColor(media,widget["color"].toString());
+        } else {
+            auto *countdown=createCountdown(widget["name"].toString(), widget["seconds"].toInt(60), widget["textId"].toString(),true,widget["format"].toString("MM:SS.C"),widget["totalTextId"].toString());
+            bottom->setActionColor(countdown,widget["color"].toString());
+        }
     }
     filename=path;dirty=false;setWindowModified(false);setWindowTitle("Sessions — "+QFileInfo(path).fileName()+"[*]");refresh();return true;
 }

@@ -11,6 +11,9 @@
 #include <QPixmap>
 #include <QThread>
 #include <QEventLoop>
+#include <QLabel>
+#include <QSlider>
+#include <QEvent>
 #include <memory>
 int smokeTest(QApplication &app);
 int playbackTest(QApplication &app);
@@ -22,13 +25,35 @@ int main(int argc,char **argv){
     // Prepare the media engine alongside fonts and styles while the splash
     // remains visible and its event loop stays responsive.
     QSplashScreen splash(QPixmap(":/icons/splashscreen.png"));
+    QLabel startupStatus(&splash);
+    startupStatus.setGeometry(16,splash.height()-48,splash.width()-32,18);
+    startupStatus.setStyleSheet("background: transparent; border: none; padding: 0; color: #80a4ae; font-family: Tahoma; font-size: 11px;");
+    startupStatus.setText("Preparando multimedia…");
+    QSlider startupProgress(Qt::Horizontal,&splash);
+    startupProgress.setObjectName("splashLoading");
+    startupProgress.setGeometry(16,splash.height()-28,180,16);
+    startupProgress.setRange(0,5);startupProgress.setValue(0);
+    startupProgress.setFocusPolicy(Qt::NoFocus);
+    startupProgress.setAttribute(Qt::WA_TransparentForMouseEvents);
+    startupProgress.setAccessibleName("Preparación del motor multimedia");
+    startupProgress.setStyleSheet(
+        "QSlider { background: transparent; border: none; }"
+        "QSlider::groove:horizontal { border: 1px solid #686b74; height: 6px; background: transparent; border-radius: 3px; }"
+        "QSlider::sub-page:horizontal { background: #80a4ae; border-radius: 3px; }"
+        "QSlider::handle:horizontal { background: #80a4ae; width: 10px; margin: -3px 0; border: 1px solid #80a4ae; border-radius: 3px; }");
     std::unique_ptr<QThread> mediaWarmup;
     if(!testMode){
         splash.setCursor(Qt::WaitCursor);
-        splash.showMessage("Preparando multimedia…",Qt::AlignBottom|Qt::AlignHCenter,QColor("#80a4ae"));
         splash.show();
         QCoreApplication::processEvents();
-        mediaWarmup.reset(QThread::create([]{Multimedia::warmUpBackend();}));
+        mediaWarmup.reset(QThread::create([&]{
+            Multimedia::warmUpBackend([&](int phase,const QString &text){
+                QMetaObject::invokeMethod(&splash,[&,phase,text]{
+                    startupProgress.setValue(phase);startupStatus.setText(text);
+                    startupProgress.setAccessibleDescription(text);
+                },Qt::QueuedConnection);
+            });
+        }));
         mediaWarmup->start();
     }
     QString fontDirectory=QDir(app.applicationDirPath()).filePath("font");
@@ -61,6 +86,7 @@ int main(int argc,char **argv){
         QObject::connect(mediaWarmup.get(),&QThread::finished,&waiting,&QEventLoop::quit);
         if(mediaWarmup->isRunning())waiting.exec();
         mediaWarmup->wait();
+        QCoreApplication::sendPostedEvents(&splash,QEvent::MetaCall);
     }
     MainWindow window;
     if(!testMode)splash.finish(&window);

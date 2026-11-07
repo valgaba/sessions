@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QTimer>
 #include <memory>
+#include <functional>
 #include <QImage>
 #include <QUuid>
 #include <QElapsedTimer>
@@ -31,12 +32,14 @@ public:
     bool hasCurrentFrame() const { return !awaitingFreshFrame && !lastFrame.isNull(); }
     void configure(const QString &name, const QString &file);
     qint64 position() const;
+    qint64 displayPosition() const;
     qint64 duration() const;
     bool isPlaying() const;
     bool isPaused() const;
     bool hasVideo() const;
     bool isAudioMuted() const;
     bool isStillImage() const { return imageMode; }
+    bool isAudioOnly() const;
     bool loops() const { return looping; }
     bool purges() const;
     bool playsNext() const;
@@ -49,7 +52,7 @@ public:
     void setLoop(bool enabled);
     static bool isImageFile(const QString &file);
     static bool backendAvailable();
-    static void warmUpBackend();
+    static void warmUpBackend(const std::function<void(int,const QString &)> &progress = {});
     static QList<AudioOutputDevice> audioDevices();
     static bool volumeControlAvailable();
     QString currentAudioDevice() const;
@@ -81,9 +84,11 @@ private:
     void restartForLoop();
     void receiveFrame();
     void updatePlayback();
+    void updateTimeline();
     void updateTime(qint64 position, qint64 duration);
     void updateThumbnail(const QImage &image);
     void setLoading(bool loading);
+    void setTransportActive(QPushButton *active);
     QString mediaName = "Multimedia";
     QString path;
     QString compositionAudioDevice;
@@ -108,6 +113,7 @@ private:
     QSlider *slider;
     QProgressBar *loadingBar;
     QTimer poll;
+    QTimer timelineTimer;
     std::unique_ptr<MediaPlayback> playback;
     std::unique_ptr<VideoFrames> frames;
     std::unique_ptr<ThumbnailProbe> thumbnailProbe;
@@ -126,6 +132,10 @@ private:
     qint64 finishedTime = 0;
     mutable qint64 knownDuration = 0;
     qint64 shownPosition = 0;
+    mutable QElapsedTimer displayTick;
+    mutable qint64 displaySample = 0;
+    mutable qreal displayTime = 0;
+    mutable qreal displayCorrection = 0;
     qint64 seekTarget = 0;
     bool seeking = false;
     QElapsedTimer seekWait;

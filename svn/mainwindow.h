@@ -56,6 +56,7 @@ private:
     void updateAudioTooltips();
     void updateVolumeTooltips();
     void updateAudioActivity();
+    void updateRemainingTimes();
     QString suggestedElementName(const QString &base) const;
     void addClipboardActions(QMenu *menu, const QList<CanvasItem *> &items, const QPointF &position = {}, bool usePosition = false);
     void copyItems(const QList<CanvasItem *> &items, bool cut);
@@ -70,6 +71,7 @@ private:
     QGraphicsPixmapItem *fadeOverlay = nullptr;
     int fadeDurationMs = 1000;
     bool pendingMediaFade = false;
+    bool replacingMedia = false;
     QPointer<Multimedia> activeMedia;
     QPointer<Multimedia> previewMedia;
     QList<QPointer<Multimedia>> outputMedia;
@@ -89,6 +91,8 @@ private:
     QSlider *outputVolume = nullptr;
     QLabel *compositionVolumeText = nullptr;
     QLabel *outputVolumeText = nullptr;
+    QLabel *compositionRemaining = nullptr;
+    QLabel *outputRemaining = nullptr;
     VuMeter *compositionVuMeter = nullptr;
     VuMeter *outputVuMeter = nullptr;
     AudioMeter *compositionAudioMeter = nullptr;
