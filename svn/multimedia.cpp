@@ -18,12 +18,14 @@
 #endif
 
 struct VideoFrames {
+    quint64 serial=0;
     QMutex mutex;
     QByteArray storage;
     unsigned width=0,height=0,pitch=0;
     uchar *pixels=nullptr;
     QSize maximumSize{1920,1080};
     std::atomic_bool queued{false};
+    std::atomic<quint64> produced{0};
     std::function<void()> notify;
     static unsigned format(void **opaque,char *chroma,unsigned *width,unsigned *height,unsigned *pitches,unsigned *lines) {
         auto *frames=static_cast<VideoFrames *>(*opaque);QMutexLocker guard(&frames->mutex);
@@ -45,6 +47,7 @@ struct VideoFrames {
     static void unlock(void *opaque,void *,void *const *) {static_cast<VideoFrames *>(opaque)->mutex.unlock();}
     static void display(void *opaque,void *) {
         auto *frames=static_cast<VideoFrames *>(opaque);
+        ++frames->produced;
         if(!frames->queued.exchange(true))frames->notify();
     }
 };
@@ -277,7 +280,11 @@ Multimedia::Multimedia(QWidget *parent):QWidget(parent) {
     connect(&timelineTimer,&QTimer::timeout,this,&Multimedia::updateTimeline);
     setToolTip("Botón derecho: archivo y propiedades de Multimedia");
 }
-Multimedia::~Multimedia() { thumbnailProbe.reset();poll.stop();timelineTimer.stop(); playback.reset(); }
+Multimedia::~Multimedia() {
+    thumbnailProbe.reset();poll.stop();timelineTimer.stop();
+    if(loopPreparationThread)loopPreparationThread->wait();
+    loopPlayback.reset();loopFrames.reset();playback.reset();
+}
 void Multimedia::setTransportActive(QPushButton *active) {
     for(auto *button:{playButton,cueButton,pauseButton}) {
         const bool enabled=button==active;
@@ -528,6 +535,89 @@ void Multimedia::configure(const QString &name,const QString &file) {
     layout()->activate();updateGeometry();
     emit configurationChanged();
 }
+bool Multimedia::configureVideoPlayer(MediaPlayback &target,std::unique_ptr<VideoFrames> &buffer) {
+    auto &api=vlc();
+    if(!target.player)return false;
+    auto *media=api.newMedia(target.instance,QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).toUtf8().constData());
+    if(!media)return false;
+    // Keep the same demuxer and safe MOV decoder settings in both loop players.
+    if(QStringList{"mp4","mov","m4v","m4a"}.contains(QFileInfo(path).suffix().toLower()))api.mediaOption(media,":demux=avformat");
+    if(QFileInfo(path).suffix().compare("mov",Qt::CaseInsensitive)==0)api.mediaOption(media,":avcodec-threads=1");
+    api.setMedia(target.player,media);api.releaseMedia(media);
+    const auto generation=++frameGeneration;
+    buffer=std::make_unique<VideoFrames>();buffer->serial=generation;
+    buffer->notify=[this,generation]{QMetaObject::invokeMethod(this,[this,generation]{
+        if(frames && frames->serial==generation)receiveFrame();
+        else if(loopFrames && loopFrames->serial==generation)receiveLoopFrame();
+    },Qt::QueuedConnection);};
+    api.setCallbacks(target.player,VideoFrames::lock,VideoFrames::unlock,VideoFrames::display,buffer.get());
+    api.setFormat(target.player,VideoFrames::format,nullptr);
+    return true;
+}
+void Multimedia::prepareLoop() {
+    if(!looping || imageMode || isAudioOnly() || !playback || !playback->player || loopReady || loopPreparing)return;
+    loopPreparing=true;loopImage=QImage();
+    auto &api=vlc();
+    if(!loopPlayback) {
+        loopPlayback=std::make_unique<MediaPlayback>();
+        if(!configureVideoPlayer(*loopPlayback,loopFrames)){loopPlayback.reset();loopFrames.reset();return;}
+        loopFrameFloor=1;
+        api.mute(loopPlayback->player,1);
+        if(api.audioDeviceSet)api.audioDeviceSet(loopPlayback->player,nullptr,(cueMode?compositionAudioDevice:outputAudioDevice).toUtf8().constData());
+        if(api.play(loopPlayback->player)<0)return;
+    } else {
+        // The outgoing player is already paused. Seeking it now prepares the
+        // first frame while the other player is showing the current iteration.
+        api.mute(loopPlayback->player,1);
+        const int state=api.getState(loopPlayback->player);
+        loopFrameFloor=loopFrames->produced.load()+1;
+        if(state==6 || state==5 || state==7) {
+            // Restart an already-ended spare off the GUI thread. The other
+            // decoder continues displaying frames while this one is prepared.
+            if(loopPreparationThread)loopPreparationThread->wait();
+            auto *player=loopPlayback->player;
+            loopPreparationThread.reset(QThread::create([player]{vlc().stop(player);vlc().play(player);}));
+            loopPreparationThread->start();
+        } else {
+            api.pause(loopPlayback->player,1);
+            api.setTime(loopPlayback->player,0);
+        }
+    }
+}
+void Multimedia::receiveLoopFrame() {
+    if(!loopFrames || !loopPlayback)return;
+    loopFrames->queued=false;
+    if(!loopPreparing || loopReady)return;
+    if(loopFrames->produced.load()<loopFrameFloor)return;
+    // Discard queued pictures from the end of the previous iteration.
+    if(vlc().getTime(loopPlayback->player)>100)return;
+    vlc().pause(loopPlayback->player,1);
+    {QMutexLocker guard(&loopFrames->mutex);if(loopFrames->pixels)
+        loopImage=QImage(loopFrames->pixels,int(loopFrames->width),int(loopFrames->height),int(loopFrames->pitch),QImage::Format_RGB32).copy();}
+    loopReady=!loopImage.isNull();
+    if(loopReady)loopPreparing=false;
+}
+bool Multimedia::activatePreparedLoop() {
+    if(!loopReady || !loopPlayback || !loopFrames || loopImage.isNull())return false;
+    if(loopPreparationThread && !loopPreparationThread->isFinished())return false;
+    auto &api=vlc();
+    api.mute(playback->player,1);api.pause(playback->player,1);
+    playback.swap(loopPlayback);frames.swap(loopFrames);
+    lastFrame=loopImage;loopImage=QImage();loopReady=false;loopPreparing=false;
+    displayTick.invalidate();finished=false;finishedTime=0;shownPosition=0;seeking=false;
+    acceptFrames=true;awaitingFreshFrame=false;
+    audioDeviceApplied=false;audioVolumeApplied=false;
+    applyAudioDevice(cueMode?compositionAudioDevice:outputAudioDevice);
+    applyAudioVolume(cueMode?compositionVolume:outputVolume);
+    api.mute(playback->player,cueMode?1:0);
+    api.pause(playback->player,0);
+    slider->setValue(slider->minimum());updateTime(0,duration());
+    poll.start();timelineTimer.start();
+    // Switch the picture immediately; no scene relaunch or fade at loop seams.
+    emit frameReady(lastFrame);
+    QTimer::singleShot(0,this,&Multimedia::prepareLoop);
+    return true;
+}
 bool Multimedia::startPlayback() {
     if(qEnvironmentVariableIsSet("SESSIONS_MEDIA_TRACE"))std::fprintf(stderr,"SESSIONS start cue=%d playing=%d finished=%d\n",cueMode,isPlaying(),finished);
     if(!QFileInfo(path).isFile()){setLoading(false);status->setText("Archivo no encontrado");return false;}
@@ -546,20 +636,7 @@ bool Multimedia::startPlayback() {
     if(!playback) {
         playback=std::make_unique<MediaPlayback>();
         if(!playback->player){setLoading(false);status->setText("No se pudo iniciar el reproductor");playback.reset();return false;}
-        auto &api=vlc();auto *media=api.newMedia(playback->instance,QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).toUtf8().constData());
-        if(!media){setLoading(false);status->setText("No se pudo abrir el archivo");playback.reset();return false;}
-        // VLC's native MP4 demuxer can reset PCR at fragment boundaries and
-        // freeze the last decoded frame while its new clock catches up.
-        // FFmpeg's demuxer preserves the timeline of fragmented MP4/MOV files.
-        if(QStringList{"mp4","mov","m4v","m4a"}.contains(QFileInfo(path).suffix().toLower()))api.mediaOption(media,":demux=avformat");
-        // MOV can contain Resolume DXV. VLC 3's threaded DXV decoder can
-        // crash when stopped shortly after opening (Cue/Stop or replacement).
-        if(QFileInfo(path).suffix().compare("mov",Qt::CaseInsensitive)==0)api.mediaOption(media,":avcodec-threads=1");
-        api.setMedia(playback->player,media);api.releaseMedia(media);
-        const auto generation=++frameGeneration;
-        frames=std::make_unique<VideoFrames>();frames->notify=[this,generation]{QMetaObject::invokeMethod(this,[this,generation]{if(generation==frameGeneration)receiveFrame();},Qt::QueuedConnection);};
-        api.setCallbacks(playback->player,VideoFrames::lock,VideoFrames::unlock,VideoFrames::display,frames.get());
-        api.setFormat(playback->player,VideoFrames::format,nullptr);
+        if(!configureVideoPlayer(*playback,frames)){setLoading(false);status->setText("No se pudo abrir el archivo");playback.reset();return false;}
         audioDeviceApplied=false;appliedAudioDevice.clear();
         audioVolumeApplied=false;appliedVolume=-1;
     }
@@ -576,10 +653,21 @@ bool Multimedia::startPlayback() {
 // Restart the same media without leaving the output, so a looping action never
 // freezes on its last frame and the other composition elements stay in place.
 void Multimedia::restartForLoop() {
+    if(activatePreparedLoop())return;
     displayTick.invalidate();
     if(!playback || !playback->player)return;
     if(qEnvironmentVariableIsSet("SESSIONS_MEDIA_TRACE"))std::fprintf(stderr,"SESSIONS loop restart\n");
     const qint64 total=duration();
+    if(isPlaying() && vlc().seekable(playback->player)) {
+        // Rewind the live input instead of tearing down and reopening VLC.
+        // Keep the outgoing image until the first frame after the seek arrives.
+        finished=false;finishedTime=0;shownPosition=0;seekTarget=0;seeking=true;seekWait.start();
+        acceptFrames=true;awaitingFreshFrame=true;
+        vlc().setTime(playback->player,0);
+        slider->setValue(slider->minimum());updateTime(0,total);
+        return;
+    }
+    // Fallback if EOF was reached before the live rewind, or seeking is unavailable.
     vlc().stop(playback->player);
     finished=false;finishedTime=0;shownPosition=0;seeking=false;acceptFrames=true;awaitingFreshFrame=true;
     slider->setValue(slider->minimum());updateTime(0,total);poll.start();
@@ -620,6 +708,8 @@ void Multimedia::stop(){
     stopPlayback(true);
 }
 void Multimedia::stopPlayback(bool clearOutput){
+    if(loopPreparationThread){loopPreparationThread->wait();loopPreparationThread.reset();}
+    loopPreparing=false;loopReady=false;loopPlayback.reset();loopFrames.reset();loopImage=QImage();
     displayTick.invalidate();
     setTransportActive(nullptr);
     pendingTransport=0;
@@ -644,6 +734,14 @@ void Multimedia::updateTime(qint64 current,qint64 total){time->setText(clockTime
 void Multimedia::updateTimeline() {
     if(slider->isSliderDown())return;
     const qint64 total=duration(),current=displayPosition();
+    if(looping && loopReady && !finished && !seeking && playback && playback->player
+        && ((isPlaying() && total>0 && current>=total-1) || vlc().getState(playback->player)==6)) {
+        if(activatePreparedLoop())return;
+    }
+    if(looping && !loopReady && !imageMode && !finished && !seeking && total>100 && current>=total-20
+        && isPlaying() && vlc().seekable(playback->player)) {
+        restartForLoop();return;
+    }
     slider->setValue(total>0?int(qMin(current,total)*slider->maximum()/total):0);
     updateTime(current,total);
 }
@@ -651,11 +749,13 @@ void Multimedia::updatePlayback(){
     if(!playback || !playback->player)return;
     if(finished)return;
     int state=vlc().getState(playback->player);qint64 total=duration(),current=position();
+    if(state==3 && hasVideo())prepareLoop();
     if(cueMode && state==3 && !hasVideo())vlc().mute(playback->player,0);
     // End-of-file may reset VLC's clock/length before its terminal state is read.
     // Rewind only on an explicit seek/Stop or once completion is confirmed.
     if(seeking) {
-        if(qAbs(current-seekTarget)<=500 || seekWait.elapsed()>2000)seeking=false;
+        const qint64 tolerance=qMin(qint64(100),qMax(qint64(10),total/4));
+        if(qAbs(current-seekTarget)<=tolerance || seekWait.elapsed()>2000)seeking=false;
         else current=seekTarget;
     }
     if(state==6 || ((state==0 || state==5) && total>0 && shownPosition>=qMax(qint64(1),total-1000))) {

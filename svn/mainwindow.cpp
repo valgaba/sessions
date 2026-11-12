@@ -135,7 +135,7 @@ MainWindow::MainWindow() {
     compositionLayout->setContentsMargins(4,4,4,4);
     auto *compositionHeader = new QHBoxLayout;
     compositionHeader->setSpacing(4);
-    compositionHeader->addWidget(new QLabel("COMPOSICIÓN  ·  1280 × 720"));
+    compositionHeader->addWidget(new QLabel("COMPOSICIÓN"));
     compositionHeader->addStretch();
     compositionHeader->addWidget(compositionRemaining);
     compositionHeader->addStretch();
@@ -173,7 +173,7 @@ MainWindow::MainWindow() {
     auto *outputLayout = new QVBoxLayout(output); outputLayout->setContentsMargins(4,4,4,4);
     auto *outputHeader = new QHBoxLayout;
     outputHeader->setSpacing(4);
-    outputHeader->addWidget(new QLabel("SALIDA  ·  1280 × 720"));
+    outputHeader->addWidget(new QLabel("SALIDA"));
     outputHeader->addStretch();
     outputHeader->addWidget(outputRemaining);
     outputHeader->addStretch();
