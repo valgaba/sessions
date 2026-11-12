@@ -1,4 +1,5 @@
 #include "countdown.h"
+#include "playercolorindicator.h"
 #include <QContextMenuEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -32,6 +33,7 @@ Countdown::Countdown(QWidget *parent) : QWidget(parent) {
     layout->setContentsMargins(8, 6, 8, 6);
     layout->setSpacing(6);
     auto *header = new QHBoxLayout;
+    header->addWidget(new PlayerColorIndicator(this),0,Qt::AlignTop);
     auto *controls = new QHBoxLayout;
     title = new QLabel("Countdown");
     title->setTextFormat(Qt::PlainText);

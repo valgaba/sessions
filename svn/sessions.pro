@@ -20,6 +20,7 @@ SOURCES += sourcepanel.cpp
 HEADERS += sourcepanel.h
 SOURCES += multimedia.cpp
 HEADERS += multimedia.h
+HEADERS += playercolorindicator.h
 SOURCES += slider.cpp
 HEADERS += slider.h
 SOURCES += aboutdialog.cpp

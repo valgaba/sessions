@@ -1,6 +1,7 @@
 #include "multimedia.h"
 #include <QtWidgets>
 #include "slider.h"
+#include "playercolorindicator.h"
 #include <atomic>
 #include <algorithm>
 #include <cstring>
@@ -230,6 +231,7 @@ Multimedia::Multimedia(QWidget *parent):QWidget(parent) {
     setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
     auto *layout=new QVBoxLayout(this); layout->setContentsMargins(8,6,8,6); layout->setSpacing(6);
     auto *header=new QHBoxLayout;
+    header->addWidget(new PlayerColorIndicator(this),0,Qt::AlignTop);
     title=new QLabel(mediaName); title->setObjectName("MultimediaTitle");title->setTextFormat(Qt::PlainText);
     title->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);header->addWidget(title,1);
     status=new QLabel("Sin archivo",this);status->setObjectName("MultimediaStatus");status->hide();

@@ -247,12 +247,8 @@ void WidgetContainer::setActionColor(QWidget *action,const QString &value) {
     if(!action || contentsLayout->indexOf(action)<0)return;
     const QColor color(value);
     action->setProperty("playerColor",color.isValid()?color.name():QString());
-    if(!color.isValid()){action->setStyleSheet(QString());return;}
-    const QColor base("#181e2c");
-    auto tint=[&](qreal amount){return QColor(qRound(base.red()*(1-amount)+color.red()*amount),
-        qRound(base.green()*(1-amount)+color.green()*amount),qRound(base.blue()*(1-amount)+color.blue()*amount)).name();};
-    action->setStyleSheet(QString("#%1 { background: %2; } #%1[selected=\"true\"] { background: %3; }")
-        .arg(action->objectName(),tint(.22),tint(.36)));
+    action->setStyleSheet(QString());
+    if(auto *indicator=action->findChild<QWidget *>("playerColorIndicator"))indicator->update();
 }
 void WidgetContainer::moveCountdown(Countdown *countdown, int insertionIndex) {
     moveWidget(countdown,insertionIndex);

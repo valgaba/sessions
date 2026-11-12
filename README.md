@@ -124,7 +124,7 @@ Las cabeceras de Composición y Salida muestran, antes del deslizador de volumen
 
 El deslizador de cada Multimedia usa el mismo reloj visual interpolado y se actualiza cada 16 ms, con una escala de 100000 pasos para evitar saltos visibles. La consulta del estado real de VLC se mantiene independiente, cada 100 ms. Durante el arrastre el tirador permanece bajo el control del usuario.
 
-El panel Player (antes Acciones) incluye en su menú contextual la paleta original de Radit: sin color, rojo, naranja, verde, azul, cian y rosa. Se aplica a los objetos seleccionados, incluidos Countdown y Multimedia. Los fondos se oscurecen para conservar el contraste de textos e iconos y el borde de selección. El color se conserva al guardar, abrir y copiar/pegar.
+El panel Player (antes Acciones) incluye en su menú contextual la paleta original de Radit: sin color, rojo, naranja, verde, azul, cian y rosa. Cada Countdown y Multimedia muestra el color en el mismo indicador gráfico de Radit: un trapecio y dos franjas diagonales al inicio de su cabecera. El fondo y el borde conservan su aspecto habitual. Sin color oculta el dibujo. El color se conserva al guardar, abrir y copiar/pegar.
 
 Si Play sustituye un vídeo o imagen por un archivo de audio con Mix desactivado, el contenido visual anterior recibe Stop y se retira mediante el fundido configurado, sin esperar fotogramas del audio. Los textos y formas de composición permanecen en salida; si no hay otros elementos, el fundido termina en negro. Con Mix activado, el audio se añade conservando el vídeo.
 
